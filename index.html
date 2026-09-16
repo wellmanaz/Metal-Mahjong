@@ -128,10 +128,50 @@ button:disabled { opacity: .45; cursor: default; }
 .tile.hint { animation: pulse .7s ease-in-out 3; }
 @keyframes pulse { 50% { box-shadow: 5px 6px 0 var(--brass), 0 0 0 5px var(--brass); } }
 .tile:focus-visible { outline: 3px solid var(--brass); outline-offset: 2px; }
-#overlay { position: fixed; inset: 0; display: none; place-items: center; background: rgba(10,10,12,.78); z-index: 99999; }
+#overlay { position: fixed; inset: 0; display: none; place-items: center; background: rgba(10,10,12,.82); z-index: 99999; padding: 16px; }
 #overlay.show { display: grid; }
-#overlay div { text-align: center; }
-#overlay p { font-family: "Metal Mania", Georgia, serif; font-size: 60px; margin: 0 0 16px; }
+.summary {
+  width: min(760px, 100%); max-height: calc(100vh - 32px); display: flex; flex-direction: column;
+  background: linear-gradient(#26292d, #1b1d20); border: 2px solid var(--brass); border-radius: 8px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.8);
+}
+.sumHead { padding: 18px 22px 10px; text-align: center; border-bottom: 1px solid #3a3e44; }
+#overlayText { font-family: "Metal Mania", Georgia, serif; font-size: 56px; line-height: 1; margin: 0; }
+#overlayText.lost { color: #e07a6a; }
+#sumStats { color: var(--brass); margin-top: 6px; }
+#sumList { list-style: none; margin: 0; padding: 6px 22px; overflow-y: auto; flex: 1; }
+.sumItem { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid #2f3337; }
+.sumItem:last-child { border-bottom: 0; }
+.sumItem img { width: 72px; height: 72px; object-fit: cover; flex: none; border: 1px solid #3a3e44; background: #111; }
+.sumText { min-width: 0; flex: 1; }
+.sumAlbum { font-size: 19px; line-height: 1.25; }
+.sumAlbum b { font-weight: 600; }
+.sumAlbum .yr, .sumCount { color: var(--ash); }
+.links { display: inline-flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.links a {
+  font-size: 13px; font-weight: 600; color: var(--bone); text-decoration: none;
+  padding: 2px 8px; border-radius: 10px; border: 1px solid #4a4f55; background: #2c3035; white-space: nowrap;
+}
+.links a:hover { border-color: var(--brass); }
+.links a.sp::before { content: "● "; color: #1ed760; }
+.links a.am::before { content: "● "; color: #fa2d48; }
+.sumSongs { list-style: none; margin: 8px 0 0; padding: 0; }
+.sumSongs li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 3px 0; color: var(--bone); font-size: 16px; }
+.sumSongs li .note { color: var(--brass); }
+.sumSongs li.none { color: var(--ash); font-style: italic; }
+.sumEmpty { color: var(--ash); text-align: center; padding: 20px 0; }
+.sumFoot {
+  display: flex; justify-content: center; gap: 10px; flex-wrap: wrap;
+  padding: 14px 22px; border-top: 1px solid #3a3e44; background: #1b1d20; border-radius: 0 0 8px 8px;
+}
+#btnOverlayNew { font-size: 20px; padding: 10px 26px; }
+body.phone #overlay { padding: 6px; }
+body.phone #overlayText { font-size: 38px; }
+body.phone .sumHead { padding: 12px 12px 8px; }
+body.phone #sumList { padding: 4px 12px; }
+body.phone .sumItem img { width: 52px; height: 52px; }
+body.phone .sumAlbum { font-size: 16px; }
+body.phone .sumSongs li { font-size: 14px; }
 dialog { background: #2b2e33; color: var(--bone); border: 1px solid #4a4f55; border-radius: 4px; width: min(640px, 92vw); }
 dialog::backdrop { background: rgba(0,0,0,.6); }
 dialog h2 { margin: 0 0 6px; font-weight: 600; color: var(--brass); }
@@ -144,11 +184,11 @@ dialog input { font-family: inherit; font-size: 16px; }
 .credit { padding: 0 20px 12px; color: #6d7076; font-size: 14px; }
 .credit a { color: inherit; }
 .settings { display: contents; }
-#btnStart {
+#btnStart, .startLike {
   background: linear-gradient(#a52323, #7a1616); border: 1px solid #c94040; border-bottom-color: #3a0808;
   color: #fff; font-size: 18px; letter-spacing: .02em; padding: 9px 14px;
 }
-#btnStart:hover { background: linear-gradient(#b92a2a, #8a1a1a); }
+#btnStart:hover, .startLike:hover { background: linear-gradient(#b92a2a, #8a1a1a); }
 #btnStart.pending { animation: startPulse 1.1s ease-in-out infinite; }
 @keyframes startPulse {
   50% { box-shadow: 0 0 0 3px var(--brass), 0 0 18px 2px rgba(200,60,60,.9); }
@@ -346,7 +386,19 @@ body.wide .credit { grid-column: 2; grid-row: 2; text-align: center; padding: 4p
     <div class="dlgButtons"><button value="cancel" formnovalidate>Cancel</button><button id="importAdd" value="add">Add layout</button></div>
   </form>
 </dialog>
-<div id="overlay"><div><p id="overlayText">Cleared</p><div class="dlgButtons" style="justify-content:center"><button id="btnOverlayUndo">Undo last move</button><button id="btnOverlayNew">New game</button></div></div></div>
+<div id="overlay">
+  <div class="summary" role="dialog" aria-modal="true" aria-labelledby="overlayText">
+    <div class="sumHead">
+      <p id="overlayText">Cleared</p>
+      <div id="sumStats"></div>
+    </div>
+    <ol id="sumList" aria-label="Albums and songs from this game"></ol>
+    <div class="sumFoot">
+      <button id="btnOverlayUndo">Undo last move</button>
+      <button id="btnOverlayNew" class="startLike">▶ New game</button>
+    </div>
+  </div>
+</div>
 <script>
 
 /* ---------- Album pool ---------- */
@@ -2135,6 +2187,7 @@ function applyBoardSize() {
   document.body.style.setProperty("--tile-pad", SMALL_BOARD ? "3px" : "5px");
 }
 let covers = [], tiles = [], tray = [], history = [], layoutName = "", gameOver = false, lastFace = null;
+let matchedLog = [], gameStartedAt = 0;     // faces in the order they were matched, for the end screen
 let zoom = 1;
 try { zoom = parseFloat(localStorage.getItem("metal-mahjong-zoom")) || 1; } catch (_) {}
 
@@ -2161,6 +2214,7 @@ function newGame() {
   if (!asg) { status(`Couldn't deal a winnable game on "${layoutName}". Pick another layout.`); return; }
   tiles = geom.map(g => ({ ...g, face: asg.get(g.id), alive: true }));
   tray = []; history = []; gameOver = false; lastFace = null;
+  matchedLog = []; gameStartedAt = Date.now();
   $("lastCover").removeAttribute("src");
   $("lastBtn").disabled = true;
   $("lastInfo").innerHTML = `<div class="album">Tap free tiles to move them into the tray.</div>`;
@@ -2266,6 +2320,8 @@ function clickTile(id) {
   const k = tray.findIndex(j => tiles[j].face === t.face);
   if (k >= 0) {
     tray.splice(k, 1);
+    matchedLog.push(t.face);
+    history[history.length - 1].matched = true;
     showMatch(t.face);
     music.onMatch(t.face);
     status("");
@@ -2277,10 +2333,10 @@ function clickTile(id) {
   if (tray.length >= TRAY_SIZE) {
     gameOver = true;
     status("Tray full. Undo to back out, or start a new game.");
-    showOverlay("Tray full");
+    showSummary(false);
   } else if (!tiles.some(t => t.alive) && !tray.length) {
     gameOver = true;
-    showOverlay("Cleared");
+    showSummary(true);
   }
   resetAuto();
 }
@@ -2302,6 +2358,7 @@ function undo() {
   if (!last) return;
   tiles[last.id].alive = true;
   tray = last.tray;
+  if (last.matched) matchedLog.pop();
   gameOver = false;
   $("overlay").classList.remove("show");
   status("");
@@ -2352,10 +2409,73 @@ function reshuffle() {
   resetAuto();
 }
 
-function showOverlay(text) {
-  $("overlayText").textContent = text;
-  $("btnOverlayUndo").hidden = text !== "Tray full";
+/* ---------- End screen ----------
+   Every album matched this game, with the songs that played for it and plain
+   search links to Spotify and Apple Music (no affiliate or tracking parameters). */
+const spotifyLink = q => `https://open.spotify.com/search/${encodeURIComponent(q)}`;
+const appleLink = q => `https://music.apple.com/us/search?term=${encodeURIComponent(q)}`;
+function hx(tag, props = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") e.className = v; else if (k === "text") e.textContent = v; else e.setAttribute(k, v);
+  }
+  kids.flat().forEach(k => k != null && e.append(k));
+  return e;
+}
+function linkPair(q, appleUrl) {
+  return hx("span", { class: "links" },
+    hx("a", { class: "sp", href: spotifyLink(q), target: "_blank", rel: "noopener noreferrer", text: "Spotify" }),
+    hx("a", { class: "am", href: appleUrl || appleLink(q), target: "_blank", rel: "noopener noreferrer", text: "Apple Music" }));
+}
+function formatDuration(ms) {
+  const s = Math.round(ms / 1000), m = Math.floor(s / 60);
+  return m ? `${m}m ${String(s % 60).padStart(2, "0")}s` : `${s}s`;
+}
+function showSummary(won) {
+  const title = $("overlayText");
+  title.textContent = won ? "Cleared!" : "Tray full";
+  title.classList.toggle("lost", !won);
+  const totalPairs = tiles.length / 2;
+  const left = tiles.filter(t => t.alive).length;
+  $("sumStats").textContent = [
+    `${matchedLog.length} of ${totalPairs} pairs matched`,
+    won ? null : `${left} tiles left on the board`,
+    `${formatDuration(Date.now() - gameStartedAt)}`,
+    filterLabel() || null,
+  ].filter(Boolean).join(" · ");
+
+  const list = $("sumList");
+  list.replaceChildren();
+  const order = [], counts = new Map();
+  for (const f of matchedLog) {
+    if (!counts.has(f)) order.push(f);
+    counts.set(f, (counts.get(f) || 0) + 1);
+  }
+  if (!order.length) list.append(hx("li", { class: "sumEmpty", text: "No pairs matched this time." }));
+  for (const f of order) {
+    const c = covers[f];
+    const songs = music.played.filter(p => p.face === f);
+    const songList = hx("ul", { class: "sumSongs" },
+      songs.length
+        ? songs.map(s => hx("li", {},
+            hx("span", {}, hx("span", { class: "note", text: "♪ " }), s.title,
+              s.artist && norm(s.artist) !== norm(c.artist) ? ` (${s.artist})` : ""),
+            linkPair(`${s.artist || c.artist} ${s.title}`, s.appleUrl)))
+        : hx("li", { class: "none", text: "No song played for this album" }));
+    list.append(hx("li", { class: "sumItem" },
+      hx("img", { src: coverUrl(c.id), alt: "", loading: "lazy" }),
+      hx("div", { class: "sumText" },
+        hx("div", { class: "sumAlbum" },
+          hx("b", { text: c.artist }), ` — ${c.title} `,
+          c.year ? hx("span", { class: "yr", text: `(${c.year})` }) : null,
+          counts.get(f) > 1 ? hx("span", { class: "sumCount", text: ` ×${counts.get(f)}` }) : null),
+        linkPair(`${c.artist} ${c.title}`),
+        songList)));
+  }
+  list.scrollTop = 0;
+  $("btnOverlayUndo").hidden = won;
   $("overlay").classList.add("show");
+  $("btnOverlayNew").focus();
 }
 
 /* ---------- Auto-pick (optional) ----------
@@ -2478,7 +2598,8 @@ async function albumHits(c, fresh = false) {
       try { data = await (await fetch(url)).json(); } catch (_) { data = await jsonp(url); }
       list = (data.results || [])
         .filter(x => x.previewUrl && artistOk(x.artistName) && albumOk(x.collectionName))
-        .map(x => ({ title: x.trackName, artist: x.artistName, album: x.collectionName, preview: x.previewUrl }));
+        .map(x => ({ title: x.trackName, artist: x.artistName, album: x.collectionName, preview: x.previewUrl,
+                     appleUrl: (x.trackViewUrl || "").split("?")[0] || null }));
     } catch (e) { console.warn("iTunes lookup failed", e); }
   }
   if (!list.length) {
@@ -2502,6 +2623,7 @@ const music = {
   on: true,
   playing: false,
   hits: [], idx: 0, face: null, token: 0,
+  played: [],       // songs heard this game, for the end screen
   mode() { return $("musSource").value; },
 
   now(text, track) {
@@ -2550,6 +2672,8 @@ const music = {
       if (my !== this.token) return;
       this.idx = idx;
       this.setPlaying(true);
+      if (!this.played.some(p => p.face === this.face && p.title === h.title))
+        this.played.push({ face: this.face, title: h.title, artist: h.artist, appleUrl: h.appleUrl });
       this.now(this.hits.source === "artist"
         ? `(album not on Deezer, playing the band's top songs: ${idx + 1} of ${this.hits.length})`
         : `(hit ${idx + 1} of ${this.hits.length}, preview)`, h);
@@ -2583,7 +2707,7 @@ const music = {
     this.setPlaying(false);
   },
 
-  boardChanged() {},
+  boardChanged() { this.played = []; this.hits = []; this.face = null; this.token++; },   // drop lookups from the last game
 };
 music.audio.volume = 0.5;
 /* Unlock audio on the first tap so songs can start later, after the network lookup
