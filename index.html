@@ -102,7 +102,7 @@ button:disabled { opacity: .45; cursor: default; }
 #sizer { position: relative; margin: 0 auto; }
 #board { position: absolute; top: 0; left: 0; transform-origin: top left; }
 .tile {
-  position: absolute; width: 116px; height: 116px; padding: 5px;
+  position: absolute; width: var(--tile, 116px); height: var(--tile, 116px); padding: var(--tile-pad, 5px);
   background: linear-gradient(145deg, #f1e9d6, var(--bone) 60%);
   border-radius: 8px; border: 1px solid var(--bone-edge);
   box-shadow: 5px 6px 0 var(--bone-edge), 6px 7px 0 var(--bone-dark), 8px 12px 12px rgba(0,0,0,.55);
@@ -143,7 +143,76 @@ dialog input { font-family: inherit; font-size: 16px; }
 .dlgButtons { display: flex; justify-content: flex-end; gap: 8px; }
 .credit { padding: 0 20px 12px; color: #6d7076; font-size: 14px; }
 .credit a { color: inherit; }
+.settings { display: contents; }
+.phoneOnly { display: none; }
+body.small .tile {
+  border-radius: 6px;
+  box-shadow: 3px 4px 0 var(--bone-edge), 4px 5px 0 var(--bone-dark), 5px 8px 8px rgba(0,0,0,.55);
+}
+body.small .tile.free { box-shadow: 3px 4px 0 var(--bone-edge), 4px 5px 0 var(--bone-dark), 0 0 0 2px rgba(230,220,195,.55), 5px 8px 8px rgba(0,0,0,.6); }
+body.phone .phoneOnly { display: inline-block; }
+body.phone .desktopOnly { display: none; }
+body.phone header { padding: 8px 10px 4px; gap: 6px 10px; }
+body.phone h1 { font-size: 28px; }
+body.phone .stats { font-size: 14px; gap: 8px; width: 100%; order: 3; }
+body.phone .controls { margin-left: auto; gap: 4px; }
+body.phone .controls button, body.phone .controls select { padding: 5px 8px; font-size: 14px; }
+body.phone .settings { display: none; }
+body.phone .settings.open {
+  display: flex; flex-wrap: wrap; gap: 6px; width: 100%; order: 10;
+  padding: 8px; background: #1f2226; border: 1px solid #3a3e44; border-radius: 4px;
+}
+body.phone .trayRow { padding: 4px 10px 6px; gap: 6px; }
+body.phone .last { display: none; }
+body.phone .music { width: 100%; }
+body.phone #musNow { min-height: 0; font-size: 14px; }
+body.phone #boardWrap { padding: 0 4px 16px; }
+body.phone .credit { font-size: 12px; padding: 0 10px 8px; }
 @media (max-width: 700px) { h1 { font-size: 34px; } .controls { margin-left: 0; } }
+/* Wide screens: settings in the left gutter, tray + music in the right gutter,
+   board fills everything in between. */
+body.wide {
+  --slot: clamp(72px, calc((100vh - 420px) / 4), 150px);
+  display: grid; grid-template-columns: 250px minmax(0, 1fr) 260px; grid-template-rows: minmax(0, 1fr) auto;
+  height: 100vh; overflow: hidden;
+}
+body.wide header {
+  grid-column: 1; grid-row: 1 / span 2;
+  flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 14px;
+  padding: 16px 14px; overflow-y: auto;
+  background: rgba(0,0,0,.2); border-right: 1px solid #2f3337;
+}
+body.wide h1 { font-size: 38px; }
+body.wide .stats { flex-direction: column; gap: 2px; }
+body.wide .controls { margin-left: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; align-items: stretch; }
+body.wide .controls select, body.wide .controls .toggle, body.wide #btnImport, body.wide #btnReload, body.wide .zoom { grid-column: 1 / -1; }
+body.wide #btnNew, body.wide #btnHint, body.wide #btnShuffle, body.wide #btnUndo { order: -1; }
+body.wide .zoom { order: 1; display: flex; }
+body.wide .zoom button { flex: 1; }
+body.wide #btnImport, body.wide #btnReload { order: 2; }
+body.wide .controls .toggle { padding: 4px 2px; }
+body.wide .trayRow {
+  grid-column: 3; grid-row: 1 / span 2;
+  display: flex; flex-direction: column; align-items: stretch; gap: 16px;
+  padding: 16px 14px; overflow-y: auto;
+  background: rgba(0,0,0,.2); border-left: 1px solid #2f3337;
+}
+body.wide .trayWrap { order: -1; }
+body.wide .trayBox { align-self: center; }
+body.wide #tray { grid-template-columns: var(--slot); padding: 14px 12px; }
+body.wide #tray::before { left: 50%; top: 4px; margin: 0 0 0 -3px; }
+body.wide #tray::after { left: 50%; right: auto; top: auto; bottom: 4px; margin: 0 0 0 -3px; }
+body.wide .slot { width: var(--slot); height: var(--slot); }
+body.wide #status { max-width: 100%; }
+body.wide .music { justify-self: auto; width: 100%; margin-top: auto; }
+body.wide .music, body.wide .music * { min-width: 0; }
+body.wide .music select { width: 100%; }
+body.wide .musControls { flex-wrap: wrap; }
+body.wide #musVol { flex: 1 1 100%; }
+body.wide .last { min-height: 64px; }
+body.wide #boardWrap { grid-column: 2; grid-row: 1; display: flex; padding: 12px; }
+body.wide #sizer { margin: auto; flex: none; }
+body.wide .credit { grid-column: 2; grid-row: 2; text-align: center; padding: 4px 12px 8px; }
 @media (prefers-reduced-motion: reduce) { .tile, .tile.hint { transition: none; animation: none; } }
 </style>
 </head>
@@ -152,6 +221,13 @@ dialog input { font-family: inherit; font-size: 16px; }
   <h1>Metal Mahjong</h1>
   <div class="stats"><span id="layoutName"></span><span id="tilesLeft"></span></div>
   <div class="controls">
+    <button id="btnSettings" class="phoneOnly" aria-expanded="false" aria-controls="settingsBox">Settings</button>
+    <div id="settingsBox" class="settings">
+    <select id="sizeSel" aria-label="Board size">
+      <option value="auto">Board: auto</option>
+      <option value="small">Board: small</option>
+      <option value="full">Board: full</option>
+    </select>
     <select id="layoutSel" aria-label="Layout"></select>
     <select id="copiesSel" aria-label="Copies of each album">
       <option value="2">Each album twice</option>
@@ -169,12 +245,13 @@ dialog input { font-family: inherit; font-size: 16px; }
       <option value="30">Auto-pick after 30s</option>
       <option value="60">Auto-pick after 60s</option>
     </select>
-    <button id="btnImport">Import layout</button>
+    <button id="btnImport" class="desktopOnly">Import layout</button>
+    </div>
     <button id="btnNew">New game</button>
     <button id="btnHint">Hint</button>
     <button id="btnShuffle">Shuffle</button>
     <button id="btnUndo">Undo</button>
-    <span class="zoom">
+    <span class="zoom desktopOnly">
       <button id="zoomOut" aria-label="Zoom out">−</button>
       <button id="zoomFit">Fit</button>
       <button id="zoomIn" aria-label="Zoom in">+</button>
@@ -748,18 +825,20 @@ function generatedLayout() {
 /* Random stacked board modelled on current mobile Mahjong games: a dense base
    grid (some columns dropped half a tile), then 2-3 levels whose tiles are mostly
    placed half a tile off the tiles below, so they straddle two or four of them. */
+let SMALL_BOARD = false;   // phone-sized puzzle
 function randomStackLayout() {
   const wrap = typeof document !== "undefined" && document.getElementById("boardWrap");
-  const portrait = wrap ? wrap.clientHeight > wrap.clientWidth : false;
+  const portrait = SMALL_BOARD || (wrap ? wrap.clientHeight > wrap.clientWidth : false);
+  const [minTiles, maxTiles] = SMALL_BOARD ? [36, 64] : [96, 144];
   for (let tries = 0; tries < 300; tries++) {
-    const W = portrait ? 6 + rnd(2) : 9 + rnd(3);
-    const H = portrait ? 7 + rnd(3) : 5 + rnd(2);
+    const W = SMALL_BOARD ? 4 + rnd(2) : portrait ? 6 + rnd(2) : 9 + rnd(3);
+    const H = SMALL_BOARD ? 5 + rnd(2) : portrait ? 7 + rnd(3) : 5 + rnd(2);
     const sym = Math.random() < .65;
     const mirrorX = X => 2 * W - 2 - X;
     const colShift = [];
     for (let c = 0; c < W; c++) colShift[c] = sym && c >= W - 1 - c ? colShift[W - 1 - c] : (Math.random() < .22 ? 1 : 0);
     const base = [];
-    const holeP = .06 + Math.random() * .12;
+    const holeP = SMALL_BOARD ? .03 + Math.random() * .07 : .06 + Math.random() * .12;
     for (let c = 0; c < W; c++) for (let r = 0; r < H; r++) {
       const src = sym && c > W - 1 - c ? W - 1 - c : c;
       const key = `${src},${r}`;
@@ -770,7 +849,7 @@ function randomStackLayout() {
     delete base.holes;
     const t = base.slice();
     let lower = base;
-    const levels = 1 + 2 + rnd(2);
+    const levels = SMALL_BOARD ? 3 : 3 + rnd(2);
     for (let z = 1; z < levels; z++) {
       const cands = [];
       const minY = Math.min(...base.map(p => p.y)), maxY = Math.max(...base.map(p => p.y));
@@ -800,7 +879,7 @@ function randomStackLayout() {
       t.push(...layer);
       lower = layer;
     }
-    if (t.length >= 96 && t.length <= 144) return t;
+    if (t.length >= minTiles && t.length <= maxTiles) return t;
   }
   return generatedLayout();
 }
@@ -979,7 +1058,32 @@ function assignWithTray(geom, ids, pairFaces, initialOpen, pOpen, attempts = 400
   return null;
 }
 /* ---------- Game ---------- */
-const TILE = 116, HALF = TILE / 2, DEPTH = 10, PAD = 20;
+let TILE = 116, HALF = 58, DEPTH = 10, PAD = 20;
+/* Phone detection: touch-first device with a small screen. */
+const isPhone = () =>
+  matchMedia("(pointer: coarse)").matches && Math.min(screen.width, screen.height) < 600;
+document.body.classList.toggle("phone", isPhone());
+const wideMQ = matchMedia("(min-width: 900px)");
+const isWide = () => !isPhone() && wideMQ.matches;
+function applyWide() { document.body.classList.toggle("wide", isWide()); }
+applyWide();
+/* Size the board to the space it has: fill the whole centre on wide screens,
+   fill the width elsewhere (the page scrolls vertically). */
+function autoFit() {
+  if (!tiles.length) return;
+  if (isWide()) fitZoom(1.5); else fitWidth();
+}
+function applyBoardSize() {
+  const pref = $("sizeSel").value;
+  SMALL_BOARD = pref === "small" || (pref === "auto" && isPhone());
+  TILE = SMALL_BOARD ? 64 : 116;
+  HALF = TILE / 2;
+  DEPTH = SMALL_BOARD ? 5 : 10;
+  PAD = SMALL_BOARD ? 10 : 20;
+  document.body.classList.toggle("small", SMALL_BOARD);
+  document.body.style.setProperty("--tile", TILE + "px");
+  document.body.style.setProperty("--tile-pad", SMALL_BOARD ? "3px" : "5px");
+}
 let covers = [], tiles = [], tray = [], history = [], layoutName = "", gameOver = false, lastFace = null;
 let zoom = 1;
 try { zoom = parseFloat(localStorage.getItem("metal-mahjong-zoom")) || 1; } catch (_) {}
@@ -990,9 +1094,12 @@ const pOpen = () => parseFloat($("diffSel").value);
 
 function newGame() {
   if (!covers.length) return;
+  applyBoardSize();
   const choice = $("layoutSel").value;
   const names = Object.keys(LAYOUTS);
-  layoutName = choice === "*" ? names[rnd(names.length)] : choice;
+  // on a small board, "Any layout" only picks from the generators that scale down
+  const pool = SMALL_BOARD ? ["Random stack"] : names;
+  layoutName = choice === "*" ? pool[rnd(pool.length)] : choice;
   let geom;
   try { geom = buildGeom(finalizeLayout(LAYOUTS[layoutName](), true)); }
   catch (e) { status(`Layout "${layoutName}" failed to load: ${e.message}`); return; }
@@ -1012,6 +1119,7 @@ function newGame() {
   $("layoutName").textContent = `${layoutName}, ${Math.max(...geom.map(t => t.z)) + 1} levels, ${albumsUsed} albums`;
   status("Two matching covers in the tray clear. A fourth unmatched cover loses.");
   render();
+  autoFit();
   $("boardWrap").scrollTo(0, 0);
   music.boardChanged();
   resetAuto();
@@ -1087,10 +1195,15 @@ function applyZoom() {
   try { localStorage.setItem("metal-mahjong-zoom", zoom); } catch (_) {}
 }
 function setZoom(z) { zoom = Math.max(.3, Math.min(2, Math.round(z * 100) / 100)); applyZoom(); }
-function fitZoom() {
+function fitWidth() {
+  const w = parseFloat($("board").style.width);
+  zoom = Math.min(1.6, ($("boardWrap").clientWidth - 8) / w);
+  applyZoom();
+}
+function fitZoom(max = 2) {
   const board = $("board"), wrap = $("boardWrap");
   const w = parseFloat(board.style.width), h = parseFloat(board.style.height);
-  setZoom(Math.min((wrap.clientWidth - 24) / w, (wrap.clientHeight - 24) / h));
+  setZoom(Math.min(max, (wrap.clientWidth - 28) / w, (wrap.clientHeight - 28) / h));
 }
 
 function clickTile(id) {
@@ -1523,7 +1636,7 @@ const SETTINGS_KEY = "metal-mahjong-settings";
 function saveSettings() {
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify({
-      copies: $("copiesSel").value, side: $("sideBlock").checked, autoDelay: $("autoPick").value, layout: $("layoutSel").value,
+      size: $("sizeSel").value, copies: $("copiesSel").value, side: $("sideBlock").checked, autoDelay: $("autoPick").value, layout: $("layoutSel").value,
       diff: $("diffSel").value, music: $("musSource").value, spotify: $("spotifyUrl").value.trim()
     }));
   } catch (_) {}
@@ -1531,6 +1644,7 @@ function saveSettings() {
 try {
   const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
   if (s.copies) $("copiesSel").value = s.copies;
+  if (s.size) $("sizeSel").value = s.size;
   if (s.diff) $("diffSel").value = s.diff;
   if (typeof s.side === "boolean") $("sideBlock").checked = s.side;
   if (s.autoDelay && [...$("autoPick").options].some(o => o.value === s.autoDelay)) $("autoPick").value = s.autoDelay;
@@ -1543,6 +1657,16 @@ showMusicSource();
 
 const restart = () => { saveSettings(); newGame(); };
 $("layoutSel").onchange = restart;
+$("sizeSel").onchange = restart;
+$("btnSettings").onclick = () => {
+  const open = $("settingsBox").classList.toggle("open");
+  $("btnSettings").setAttribute("aria-expanded", open);
+};
+let resizeTimer = null;
+addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { applyWide(); autoFit(); }, 120);
+});
 $("copiesSel").onchange = restart;
 $("diffSel").onchange = restart;
 $("sideBlock").onchange = () => { SIDE_BLOCKING = $("sideBlock").checked; restart(); };
@@ -1556,7 +1680,7 @@ $("btnUndo").onclick = undo;
 $("btnReload").onclick = () => boot(true);
 $("zoomIn").onclick = () => setZoom(zoom + .1);
 $("zoomOut").onclick = () => setZoom(zoom - .1);
-$("zoomFit").onclick = fitZoom;
+$("zoomFit").onclick = () => autoFit();
 
 async function boot(force = false) {
   document.querySelectorAll("header button, header select").forEach(b => b.disabled = true);
