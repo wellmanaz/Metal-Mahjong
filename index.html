@@ -175,7 +175,21 @@ body.phone .last { display: none; }
 body.phone #status { font-size: 14px; min-height: 1.2em; }
 body.phone #musNow { min-height: 0; font-size: 14px; }
 body.phone #boardWrap { padding: 0 4px 16px; }
-body.phone .credit { font-size: 12px; padding: 0 10px 8px; }
+body.phone .credit { display: none; }
+/* compact top area so the board gets the screen */
+body.phone header { padding: 4px 8px 0; gap: 0 8px; }
+body.phone h1 { font-size: 21px; }
+body.phone #menuBtn { font-size: 18px; padding: 3px 9px; }
+body.phone .stats { font-size: 12px; line-height: 1.3; }
+body.phone .trayRow { padding: 2px 8px 0; gap: 2px; }
+body.phone .trayWrap { gap: 2px; }
+body.phone .trayBox { gap: 3px; }
+body.phone #tray { grid-template-columns: repeat(4, 50px); gap: 5px; padding: 5px 12px; border-width: 1px; }
+body.phone .slot { width: 50px; height: 50px; }
+body.phone #tray::before { left: 3px; } body.phone #tray::after { right: 3px; }
+body.phone .autoTrack { height: 3px; }
+body.phone #status { font-size: 12px; line-height: 1.25; min-height: 0; }
+body.phone #boardWrap { padding: 0 4px 8px; }
 @media (max-width: 700px) { h1 { font-size: 34px; } .controls { margin-left: 0; } }
 /* Wide screens: settings in the left gutter, tray + music in the right gutter,
    board fills everything in between. */
@@ -231,6 +245,8 @@ body.wide .credit { grid-column: 2; grid-row: 2; text-align: center; padding: 4p
   <div class="stats"><span id="layoutName"></span><span id="tilesLeft"></span></div>
   <div class="controls" id="menuPanel">
     <div id="settingsBox" class="settings">
+    <select id="genreSel" aria-label="Category"></select>
+    <select id="decadeSel" aria-label="Decade"></select>
     <select id="sizeSel" aria-label="Board size">
       <option value="auto">Board: auto</option>
       <option value="small">Board: small</option>
@@ -319,63 +335,9 @@ body.wide .credit { grid-column: 2; grid-row: 2; text-align: center; padding: 4p
 <script>
 
 /* ---------- Album pool ---------- */
-const ALBUMS = [
-  ["Black Sabbath","Black Sabbath"],["Black Sabbath","Paranoid"],["Black Sabbath","Master of Reality"],["Black Sabbath","Vol. 4"],
-  ["Black Sabbath","Sabbath Bloody Sabbath"],["Black Sabbath","Heaven and Hell"],
-  ["Iron Maiden","Iron Maiden"],["Iron Maiden","Killers"],["Iron Maiden","The Number of the Beast"],["Iron Maiden","Piece of Mind"],
-  ["Iron Maiden","Powerslave"],["Iron Maiden","Somewhere in Time"],["Iron Maiden","Seventh Son of a Seventh Son"],
-  ["Judas Priest","Sad Wings of Destiny"],["Judas Priest","Stained Class"],["Judas Priest","British Steel"],
-  ["Judas Priest","Screaming for Vengeance"],["Judas Priest","Defenders of the Faith"],["Judas Priest","Painkiller"],
-  ["Metallica","Kill 'Em All"],["Metallica","Ride the Lightning"],["Metallica","Master of Puppets"],["Metallica","...And Justice for All"],
-  ["Slayer","Show No Mercy"],["Slayer","Hell Awaits"],["Slayer","Reign in Blood"],["Slayer","South of Heaven"],["Slayer","Seasons in the Abyss"],
-  ["Megadeth","Killing Is My Business... and Business Is Good!"],["Megadeth","Peace Sells... but Who's Buying?"],
-  ["Megadeth","So Far, So Good... So What!"],["Megadeth","Rust in Peace"],
-  ["Anthrax","Spreading the Disease"],["Anthrax","Among the Living"],["Anthrax","Persistence of Time"],
-  ["Motörhead","Overkill"],["Motörhead","Bomber"],["Motörhead","Ace of Spades"],
-  ["Dio","Holy Diver"],["Dio","The Last in Line"],["Dio","Sacred Heart"],
-  ["Ozzy Osbourne","Blizzard of Ozz"],["Ozzy Osbourne","Diary of a Madman"],["Ozzy Osbourne","Bark at the Moon"],
-  ["Mercyful Fate","Melissa"],["Mercyful Fate","Don't Break the Oath"],["King Diamond","Abigail"],["King Diamond","Fatal Portrait"],
-  ["Venom","Welcome to Hell"],["Venom","Black Metal"],["Celtic Frost","To Mega Therion"],["Celtic Frost","Into the Pandemonium"],
-  ["Bathory","Under the Sign of the Black Mark"],["Bathory","Blood Fire Death"],["Bathory","Hammerheart"],
-  ["Death","Scream Bloody Gore"],["Death","Leprosy"],["Death","Spiritual Healing"],["Death","Human"],
-  ["Morbid Angel","Altars of Madness"],["Morbid Angel","Blessed Are the Sick"],
-  ["Testament","The Legacy"],["Testament","The New Order"],["Exodus","Bonded by Blood"],["Exodus","Fabulous Disaster"],
-  ["Kreator","Pleasure to Kill"],["Kreator","Extreme Aggression"],["Kreator","Coma of Souls"],
-  ["Sodom","Persecution Mania"],["Sodom","Agent Orange"],["Destruction","Infernal Overkill"],["Destruction","Eternal Devastation"],
-  ["Saxon","Wheels of Steel"],["Saxon","Strong Arm of the Law"],["Saxon","Denim and Leather"],
-  ["Accept","Restless and Wild"],["Accept","Balls to the Wall"],
-  ["Queensrÿche","The Warning"],["Queensrÿche","Rage for Order"],["Queensrÿche","Operation: Mindcrime"],
-  ["Helloween","Walls of Jericho"],["Helloween","Keeper of the Seven Keys, Part I"],["Helloween","Keeper of the Seven Keys, Part II"],
-  ["Candlemass","Epicus Doomicus Metallicus"],["Candlemass","Nightfall"],
-  ["Rainbow","Rising"],["Rainbow","Long Live Rock 'n' Roll"],["Scorpions","Lovedrive"],["Scorpions","Blackout"],
-  ["W.A.S.P.","W.A.S.P."],["W.A.S.P.","The Last Command"],
-  ["Manowar","Hail to England"],["Manowar","Sign of the Hammer"],["Manowar","Kings of Metal"],
-  ["Pantera","Cowboys From Hell"],["Pantera","Vulgar Display of Power"],
-  ["Sepultura","Schizophrenia"],["Sepultura","Beneath the Remains"],["Sepultura","Arise"],
-  ["Diamond Head","Lightning to the Nations"],["Angel Witch","Angel Witch"],["Tank","Filth Hounds of Hades"],
-  ["Raven","Wiped Out"],["Satan","Court in the Act"],["Grim Reaper","See You in Hell"],
-  ["Possessed","Seven Churches"],["Dark Angel","Darkness Descends"],["Overkill","Taking Over"],
-  ["Savatage","Hall of the Mountain King"],["Voivod","Killing Technology"],["Voivod","Dimension Hatröss"],["Voivod","Nothingface"],
-  ["Obituary","Slowly We Rot"],["Obituary","Cause of Death"],["Carcass","Symphonies of Sickness"],["Carcass","Heartwork"],
-  ["Napalm Death","Scum"],["Autopsy","Mental Funeral"],["Deicide","Deicide"],
-  ["Cannibal Corpse","Eaten Back to Life"],["Cannibal Corpse","Tomb of the Mutilated"],
-  ["Entombed","Left Hand Path"],["Dismember","Like an Ever Flowing Stream"],["Suffocation","Effigy of the Forgotten"],
-  ["Atheist","Unquestionable Presence"],["Coroner","No More Color"],
-  ["Mayhem","De Mysteriis Dom Sathanas"],["Darkthrone","A Blaze in the Northern Sky"],["Darkthrone","Transilvanian Hunger"],
-  ["Emperor","In the Nightside Eclipse"],["Immortal","Pure Holocaust"],["Burzum","Hvis lyset tar oss"],
-  ["Saint Vitus","Born Too Late"],["Trouble","Psalm 9"],["Pentagram","Relentless"],
-  ["Cirith Ungol","King of the Dead"],["Manilla Road","Crystal Logic"],["Fates Warning","Awaken the Guardian"],
-  ["Metal Church","Metal Church"],["Riot","Thundersteel"],["Armored Saint","Symbol of Salvation"],["Omen","Battle Cry"],
-  ["Nuclear Assault","Game Over"],["Sacrifice","Forward to Termination"],["Razor","Evil Invaders"],
-  ["Annihilator","Alice in Hell"],["Forbidden","Twisted Into Form"],["Vio-lence","Eternal Nightmare"],
-  ["Death Angel","The Ultra-Violence"],["Sacred Reich","Ignorance"],
-  ["Paradise Lost","Gothic"],["My Dying Bride","Turn Loose the Swans"],["Budgie","Never Turn Your Back on a Friend"]
-];
 const FACES_NEEDED = 72;  // enough for every tile pair on a 144-tile board to be a different album
-const CACHE_KEY = "metal-mahjong-covers-v2";
 const MB = "https://musicbrainz.org/ws/2/release-group/";
 const coverUrl = (id, size = 250) => `https://coverartarchive.org/release-group/${id}/front-${size}`;
-
 const $ = id => document.getElementById(id);
 const status = msg => { $("status").textContent = msg; };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -397,49 +359,6 @@ const creditName = rg => (rg["artist-credit"] || []).map(c => c.name + (c.joinph
 const toEntry = rg => ({ id: rg.id, artist: creditName(rg), title: rg.title, year: (rg["first-release-date"] || "").slice(0, 4) });
 const isStudioAlbum = rg => rg["primary-type"] === "Album" && !(rg["secondary-types"] || []).length;
 
-async function resolveCurated() {
-  const found = [];
-  const BATCH = 15;
-  for (let i = 0; i < ALBUMS.length; i += BATCH) {
-    const batch = ALBUMS.slice(i, i + BATCH);
-    status(`Querying MusicBrainz… ${Math.min(i + BATCH, ALBUMS.length)}/${ALBUMS.length} albums`);
-    const q = batch.map(([a, t]) => `(artist:"${esc(a)}" AND releasegroup:"${esc(t)}")`).join(" OR ");
-    let results;
-    try { results = await mbFetch(`(${q}) AND primarytype:album`); }
-    catch (e) { console.warn(e); continue; }
-    for (const [a, t] of batch) {
-      const nt = norm(t), na = norm(a);
-      const hit = results
-        .filter(rg => {
-          const rt = norm(rg.title);
-          const titleOk = rt === nt || (nt.length >= 8 && rt.startsWith(nt) && rt.length - nt.length <= 4);
-          return isStudioAlbum(rg) && titleOk && norm(creditName(rg)).includes(na);
-        })
-        .sort((x, y) => (y.score || 0) - (x.score || 0))[0];
-      if (hit) found.push(toEntry(hit));
-    }
-  }
-  return found;
-}
-
-async function resolveByTag(exclude, need) {
-  const tags = ["heavy metal", "thrash metal", "death metal", "black metal", "doom metal", "speed metal", "nwobhm", "power metal"];
-  const out = [];
-  for (const tag of tags) {
-    if (out.length >= need * 2) break;
-    status(`Filling gaps from MusicBrainz tag "${tag}"…`);
-    try {
-      const rgs = await mbFetch(`tag:"${tag}" AND primarytype:album AND firstreleasedate:[1970 TO 1995]`);
-      for (const rg of rgs) {
-        if (!isStudioAlbum(rg) || exclude.has(rg.id)) continue;
-        exclude.add(rg.id);
-        out.push(toEntry(rg));
-      }
-    } catch (e) { console.warn(e); }
-  }
-  return out;
-}
-
 function probeImage(src, timeout = 10000) {
   return new Promise(resolve => {
     const img = new Image();
@@ -450,33 +369,928 @@ function probeImage(src, timeout = 10000) {
   });
 }
 
-async function keepWithCovers(entries, need) {
-  const ok = [];
-  for (let i = 0; i < entries.length && ok.length < need; i += 12) {
-    const chunk = entries.slice(i, i + 12);
-    status(`Checking Cover Art Archive… ${ok.length}/${need} covers`);
+
+/* ---------- Album pool by genre + decade ----------
+   Curated albums are looked up on MusicBrainz once and cached across filters
+   ("artist|title" -> entry, or 0 when not found). If a filter has too few,
+   MusicBrainz is searched by genre tag and release-date range. */
+const ALBUM_CACHE_KEY = "metal-mahjong-albums-v3";
+const TAGFILL_KEY = "metal-mahjong-tagfill-v3";
+let albumCache = {}, tagFill = {};
+try { albumCache = JSON.parse(localStorage.getItem(ALBUM_CACHE_KEY) || "{}"); } catch (_) {}
+try { tagFill = JSON.parse(localStorage.getItem(TAGFILL_KEY) || "{}"); } catch (_) {}
+function saveCaches() {
+  try {
+    localStorage.setItem(ALBUM_CACHE_KEY, JSON.stringify(albumCache));
+    localStorage.setItem(TAGFILL_KEY, JSON.stringify(tagFill));
+  } catch (_) {}
+}
+const ckey = a => `${a.artist}|${a.title}`;
+const inDecade = (year, d) => year >= DECADES[d].from && year <= DECADES[d].to;
+const catalogFor = (genre, decade) =>
+  CATALOG.filter(a => (genre === "all" || a.genres.includes(genre)) && inDecade(a.year, decade));
+
+async function probeAll(entries, quiet) {
+  const todo = entries.filter(e => e.cover === undefined);
+  for (let i = 0; i < todo.length; i += 12) {
+    if (!quiet) status(`Checking Cover Art Archive… ${Math.min(i + 12, todo.length)}/${todo.length}`);
+    const chunk = todo.slice(i, i + 12);
     const flags = await Promise.all(chunk.map(e => probeImage(coverUrl(e.id))));
-    chunk.forEach((e, j) => { if (flags[j] && ok.length < need) ok.push(e); });
+    chunk.forEach((e, j) => e.cover = flags[j]);
   }
-  return ok;
 }
 
-async function loadCovers(force = false) {
-  if (!force) {
+async function resolveCatalog(list, quiet = false) {
+  const BATCH = 15;
+  const fresh = [];
+  for (let i = 0; i < list.length; i += BATCH) {
+    const batch = list.slice(i, i + BATCH);
+    if (!quiet) status(`Looking up albums on MusicBrainz… ${Math.min(i + BATCH, list.length)}/${list.length}`);
+    const q = batch.map(a => `(artist:"${esc(a.artist)}" AND releasegroup:"${esc(a.title)}")`).join(" OR ");
+    let results;
+    try { results = await mbFetch(`(${q}) AND primarytype:album`); }
+    catch (e) { console.warn(e); continue; }          // network trouble: leave uncached so it's retried
+    for (const a of batch) {
+      const nt = norm(a.title), na = norm(a.artist);
+      const hit = results
+        .filter(rg => {
+          const rt = norm(rg.title);
+          const titleOk = rt === nt || (nt.length >= 8 && rt.startsWith(nt) && rt.length - nt.length <= 4);
+          return isStudioAlbum(rg) && titleOk && norm(creditName(rg)).includes(na);
+        })
+        .sort((x, y) => (y.score || 0) - (x.score || 0))[0];
+      if (hit) {
+        const e = toEntry(hit);
+        if (!e.year) e.year = String(a.year);
+        albumCache[ckey(a)] = e;
+        fresh.push(e);
+      } else albumCache[ckey(a)] = 0;
+    }
+  }
+  await probeAll(fresh, quiet);
+  saveCaches();
+}
+
+async function tagSearch(genre, decade, exclude, need) {
+  const { from, to } = DECADES[decade];
+  const out = [];
+  for (const tag of GENRES[genre].tags) {
+    if (out.length >= need * 1.5) break;
+    status(`Searching MusicBrainz for "${tag}" albums…`);
     try {
-      const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
-      if (Array.isArray(cached) && cached.length) return cached;
-    } catch (_) {}
+      const rgs = await mbFetch(`tag:"${tag}" AND primarytype:album AND firstreleasedate:[${from}-01-01 TO ${to}-12-31]`);
+      for (const rg of rgs) {
+        if (!isStudioAlbum(rg) || exclude.has(rg.id)) continue;
+        exclude.add(rg.id);
+        out.push(toEntry(rg));
+      }
+    } catch (e) { console.warn(e); }
   }
-  let pool = await keepWithCovers(await resolveCurated(), FACES_NEEDED);
-  if (pool.length < FACES_NEEDED) {
-    const extra = shuffleArr(await resolveByTag(new Set(pool.map(p => p.id)), FACES_NEEDED - pool.length));
-    pool = pool.concat(await keepWithCovers(extra, FACES_NEEDED - pool.length));
+  const pick = shuffleArr(out).slice(0, Math.ceil(need * 1.5));
+  await probeAll(pick);
+  return pick.filter(e => e.cover);
+}
+
+async function loadPool(genre, decade, need, force = false) {
+  if (force) { albumCache = {}; tagFill = {}; }
+  const cands = shuffleArr(catalogFor(genre, decade));
+  const good = () => cands
+    .map(a => albumCache[ckey(a)])
+    .filter(e => e && e.cover && inDecade(parseInt(e.year, 10) || 0, decade));
+  let pool = good();
+  if (pool.length < need) {
+    const unresolved = cands.filter(a => !(ckey(a) in albumCache));
+    const take = unresolved.slice(0, Math.ceil((need - pool.length) * 1.4) + 8);
+    if (take.length) await resolveCatalog(take);
+    pool = good();
   }
-  if (pool.length) { try { localStorage.setItem(CACHE_KEY, JSON.stringify(pool)); } catch (_) {} }
+  if (pool.length < need) {
+    const fk = `${genre}|${decade}`;
+    if (!tagFill[fk]) {
+      tagFill[fk] = await tagSearch(genre, decade, new Set(pool.map(p => p.id)), need - pool.length);
+      saveCaches();
+    }
+    const have = new Set(pool.map(p => p.id));
+    pool = pool.concat(tagFill[fk].filter(e => !have.has(e.id)));
+  }
   return pool;
 }
 
+/* After a game starts, quietly look up a few more curated albums for the
+   current filter so later games draw from a bigger pool. */
+async function topUpPool(genre, decade, onNew) {
+  const unresolved = shuffleArr(catalogFor(genre, decade).filter(a => !(ckey(a) in albumCache))).slice(0, 15);
+  if (!unresolved.length) return;
+  await resolveCatalog(unresolved, true);
+  const fresh = unresolved.map(a => albumCache[ckey(a)])
+    .filter(e => e && e.cover && inDecade(parseInt(e.year, 10) || 0, decade));
+  if (fresh.length) onNew(fresh);
+}
+/* Curated catalog: year | genres | artist | title.
+   Genres: heavy thrash death black doom sludge power prog groove nu core industrial.
+   The decade shown in-game comes from MusicBrainz's first-release date, not this year. */
+const CATALOG_TEXT = `
+1970|heavy doom|Black Sabbath|Black Sabbath
+1970|heavy doom|Black Sabbath|Paranoid
+1971|heavy doom|Black Sabbath|Master of Reality
+1972|heavy doom|Black Sabbath|Vol. 4
+1973|heavy|Black Sabbath|Sabbath Bloody Sabbath
+1972|heavy|Deep Purple|Machine Head
+1973|heavy|Budgie|Never Turn Your Back on a Friend
+1976|heavy|Judas Priest|Sad Wings of Destiny
+1978|heavy|Judas Priest|Stained Class
+1976|heavy|Rainbow|Rising
+1978|heavy|Rainbow|Long Live Rock 'n' Roll
+1979|heavy|Scorpions|Lovedrive
+1979|heavy|Motörhead|Overkill
+1979|heavy|Motörhead|Bomber
+1980|heavy|Iron Maiden|Iron Maiden
+1981|heavy|Iron Maiden|Killers
+1982|heavy|Iron Maiden|The Number of the Beast
+1983|heavy|Iron Maiden|Piece of Mind
+1984|heavy|Iron Maiden|Powerslave
+1986|heavy|Iron Maiden|Somewhere in Time
+1988|heavy|Iron Maiden|Seventh Son of a Seventh Son
+1980|heavy|Judas Priest|British Steel
+1982|heavy|Judas Priest|Screaming for Vengeance
+1984|heavy|Judas Priest|Defenders of the Faith
+1980|heavy|Motörhead|Ace of Spades
+1980|heavy doom|Black Sabbath|Heaven and Hell
+1983|heavy|Dio|Holy Diver
+1984|heavy|Dio|The Last in Line
+1985|heavy|Dio|Sacred Heart
+1980|heavy|Ozzy Osbourne|Blizzard of Ozz
+1981|heavy|Ozzy Osbourne|Diary of a Madman
+1983|heavy|Ozzy Osbourne|Bark at the Moon
+1980|heavy|Saxon|Wheels of Steel
+1980|heavy|Saxon|Strong Arm of the Law
+1981|heavy|Saxon|Denim and Leather
+1982|heavy|Accept|Restless and Wild
+1983|heavy|Accept|Balls to the Wall
+1982|heavy|Scorpions|Blackout
+1984|heavy|W.A.S.P.|W.A.S.P.
+1985|heavy|W.A.S.P.|The Last Command
+1980|heavy|Diamond Head|Lightning to the Nations
+1980|heavy|Angel Witch|Angel Witch
+1982|heavy|Tank|Filth Hounds of Hades
+1982|heavy|Raven|Wiped Out
+1983|heavy|Satan|Court in the Act
+1983|heavy|Grim Reaper|See You in Hell
+1983|heavy black|Mercyful Fate|Melissa
+1984|heavy black|Mercyful Fate|Don't Break the Oath
+1986|heavy|King Diamond|Fatal Portrait
+1987|heavy|King Diamond|Abigail
+1984|heavy|Metal Church|Metal Church
+1988|heavy power|Riot|Thundersteel
+1984|heavy|Omen|Battle Cry
+1984|heavy doom|Cirith Ungol|King of the Dead
+1983|heavy|Manilla Road|Crystal Logic
+1987|heavy power|Savatage|Hall of the Mountain King
+1984|heavy prog|Queensrÿche|The Warning
+1986|heavy prog|Queensrÿche|Rage for Order
+1988|heavy prog|Queensrÿche|Operation: Mindcrime
+1986|heavy prog|Fates Warning|Awaken the Guardian
+1981|black heavy|Venom|Welcome to Hell
+1982|black heavy|Venom|Black Metal
+1985|power|Helloween|Walls of Jericho
+1987|power|Helloween|Keeper of the Seven Keys, Part I
+1988|power|Helloween|Keeper of the Seven Keys, Part II
+1984|power heavy|Manowar|Hail to England
+1984|power heavy|Manowar|Sign of the Hammer
+1988|power heavy|Manowar|Kings of Metal
+1988|power|Blind Guardian|Battalions of Fear
+1983|thrash|Metallica|Kill 'Em All
+1984|thrash|Metallica|Ride the Lightning
+1986|thrash|Metallica|Master of Puppets
+1988|thrash|Metallica|...And Justice for All
+1983|thrash|Slayer|Show No Mercy
+1985|thrash|Slayer|Hell Awaits
+1986|thrash|Slayer|Reign in Blood
+1988|thrash|Slayer|South of Heaven
+1985|thrash|Megadeth|Killing Is My Business... and Business Is Good!
+1986|thrash|Megadeth|Peace Sells... but Who's Buying?
+1988|thrash|Megadeth|So Far, So Good... So What!
+1985|thrash|Anthrax|Spreading the Disease
+1987|thrash|Anthrax|Among the Living
+1987|thrash|Testament|The Legacy
+1988|thrash|Testament|The New Order
+1989|thrash|Testament|Practice What You Preach
+1985|thrash|Exodus|Bonded by Blood
+1989|thrash|Exodus|Fabulous Disaster
+1986|thrash|Kreator|Pleasure to Kill
+1989|thrash|Kreator|Extreme Aggression
+1987|thrash|Sodom|Persecution Mania
+1989|thrash|Sodom|Agent Orange
+1985|thrash|Destruction|Infernal Overkill
+1986|thrash|Destruction|Eternal Devastation
+1987|thrash|Overkill|Taking Over
+1986|thrash|Dark Angel|Darkness Descends
+1986|thrash|Nuclear Assault|Game Over
+1987|thrash|Sacrifice|Forward to Termination
+1985|thrash|Razor|Evil Invaders
+1989|thrash|Annihilator|Alice in Hell
+1988|thrash|Vio-lence|Eternal Nightmare
+1987|thrash|Death Angel|The Ultra-Violence
+1987|thrash|Sacred Reich|Ignorance
+1987|thrash prog|Voivod|Killing Technology
+1988|thrash prog|Voivod|Dimension Hatröss
+1989|thrash prog|Voivod|Nothingface
+1989|thrash prog|Coroner|No More Color
+1985|thrash death|Possessed|Seven Churches
+1987|thrash death|Sepultura|Schizophrenia
+1989|thrash death|Sepultura|Beneath the Remains
+1987|death|Death|Scream Bloody Gore
+1988|death|Death|Leprosy
+1989|death|Morbid Angel|Altars of Madness
+1989|death|Obituary|Slowly We Rot
+1989|death|Carcass|Symphonies of Sickness
+1987|death|Napalm Death|Scum
+1989|death|Autopsy|Severed Survival
+1987|black|Bathory|Under the Sign of the Black Mark
+1988|black|Bathory|Blood Fire Death
+1985|black thrash|Celtic Frost|To Mega Therion
+1987|black thrash|Celtic Frost|Into the Pandemonium
+1986|doom|Candlemass|Epicus Doomicus Metallicus
+1987|doom|Candlemass|Nightfall
+1986|doom|Saint Vitus|Born Too Late
+1984|doom|Trouble|Psalm 9
+1985|doom|Pentagram|Relentless
+1988|industrial|Ministry|The Land of Rape and Honey
+1989|industrial|Ministry|The Mind Is a Terrible Thing to Taste
+1989|industrial sludge|Godflesh|Streetcleaner
+1985|prog|Watchtower|Energetic Disassembly
+1990|thrash|Slayer|Seasons in the Abyss
+1990|thrash|Megadeth|Rust in Peace
+1992|thrash heavy|Megadeth|Countdown to Extinction
+1990|thrash|Anthrax|Persistence of Time
+1990|thrash|Kreator|Coma of Souls
+1990|thrash|Forbidden|Twisted Into Form
+1990|thrash|Testament|Souls of Black
+1991|heavy|Metallica|Metallica
+1991|thrash death|Sepultura|Arise
+1993|groove thrash|Sepultura|Chaos A.D.
+1996|groove nu|Sepultura|Roots
+1990|death|Death|Spiritual Healing
+1991|death prog|Death|Human
+1993|death prog|Death|Individual Thought Patterns
+1995|death prog|Death|Symbolic
+1998|death prog|Death|The Sound of Perseverance
+1991|death|Morbid Angel|Blessed Are the Sick
+1993|death|Morbid Angel|Covenant
+1995|death|Morbid Angel|Domination
+1990|death|Obituary|Cause of Death
+1992|death|Obituary|The End Complete
+1991|death|Carcass|Necroticism: Descanting the Insalubrious
+1993|death|Carcass|Heartwork
+1991|death doom|Autopsy|Mental Funeral
+1990|death|Deicide|Deicide
+1992|death|Deicide|Legion
+1990|death|Cannibal Corpse|Eaten Back to Life
+1991|death|Cannibal Corpse|Butchered at Birth
+1992|death|Cannibal Corpse|Tomb of the Mutilated
+1994|death|Cannibal Corpse|The Bleeding
+1990|death|Entombed|Left Hand Path
+1991|death|Entombed|Clandestine
+1991|death|Dismember|Like an Ever Flowing Stream
+1991|death|Suffocation|Effigy of the Forgotten
+1995|death|Suffocation|Pierced from Within
+1991|death prog|Atheist|Unquestionable Presence
+1993|death prog|Cynic|Focus
+1991|death|Pestilence|Testimony of the Ancients
+1995|death|At the Gates|Slaughter of the Soul
+1996|death|In Flames|The Jester Race
+1995|death|Dark Tranquillity|The Gallery
+1994|death doom|Amorphis|Tales from the Thousand Lakes
+1998|death prog|Gorguts|Obscura
+1995|death prog|Opeth|Orchid
+1998|death prog|Opeth|My Arms, Your Hearse
+1999|death prog|Opeth|Still Life
+1999|death power|Children of Bodom|Hatebreeder
+1994|black|Mayhem|De Mysteriis Dom Sathanas
+1992|black|Darkthrone|A Blaze in the Northern Sky
+1993|black|Darkthrone|Under a Funeral Moon
+1994|black|Darkthrone|Transilvanian Hunger
+1994|black|Emperor|In the Nightside Eclipse
+1997|black|Emperor|Anthems to the Welkin at Dusk
+1993|black|Immortal|Pure Holocaust
+1995|black|Immortal|Battles in the North
+1999|black|Immortal|At the Heart of Winter
+1994|black|Burzum|Hvis lyset tar oss
+1996|black|Burzum|Filosofem
+1996|black|Satyricon|Nemesis Divina
+1995|black death|Dissection|Storm of the Light's Bane
+1997|black power|Dimmu Borgir|Enthrone Darkness Triumphant
+1996|black|Cradle of Filth|Dusk... and Her Embrace
+1999|black|Marduk|Panzer Division Marduk
+1995|black|Ulver|Bergtatt
+1991|doom|Cathedral|Forest of Equilibrium
+1991|doom|Paradise Lost|Gothic
+1993|doom|Paradise Lost|Icon
+1993|doom|My Dying Bride|Turn Loose the Swans
+1995|doom|Anathema|The Silent Enigma
+1997|doom sludge|Electric Wizard|Come My Fanatics....
+1992|doom sludge|Sleep|Sleep's Holy Mountain
+1993|doom|Type O Negative|Bloody Kisses
+1992|doom|Candlemass|Chapter VI
+1994|doom|Tiamat|Wildhoney
+1996|doom death|Katatonia|Brave Murder Day
+1990|doom death|Winter|Into Darkness
+1993|sludge|Eyehategod|Take as Needed for Pain
+1996|sludge|Eyehategod|Dopesick
+1993|sludge|Crowbar|Crowbar
+1995|sludge groove|Down|NOLA
+1992|sludge|Kyuss|Blues for the Red Sun
+1994|sludge|Kyuss|Welcome to Sky Valley
+1993|sludge|Melvins|Houdini
+1994|sludge|Acid Bath|When the Kite String Pops
+1996|sludge|Neurosis|Through Silver in Blood
+1999|sludge|Neurosis|Times of Grace
+1994|sludge heavy|Corrosion of Conformity|Deliverance
+1995|sludge|Monster Magnet|Dopes to Infinity
+1997|sludge|Fu Manchu|The Action Is Go
+1990|groove thrash|Pantera|Cowboys From Hell
+1992|groove|Pantera|Vulgar Display of Power
+1994|groove|Pantera|Far Beyond Driven
+1996|groove|Pantera|The Great Southern Trendkill
+1994|groove thrash|Machine Head|Burn My Eyes
+1990|groove thrash|Exhorder|Slaughter in the Vatican
+1992|groove industrial|White Zombie|La Sexorcisto: Devil Music, Volume One
+1995|groove industrial|White Zombie|Astro-Creep: 2000
+1994|groove industrial|Prong|Cleansing
+1992|groove core|Biohazard|Urban Discipline
+1994|nu|Korn|Korn
+1996|nu|Korn|Life Is Peachy
+1998|nu|Korn|Follow the Leader
+1999|nu|Korn|Issues
+1995|nu|Deftones|Adrenaline
+1997|nu|Deftones|Around the Fur
+1997|nu|Limp Bizkit|Three Dollar Bill, Y'all
+1999|nu|Limp Bizkit|Significant Other
+1999|nu|Slipknot|Slipknot
+1998|nu|System of a Down|System of a Down
+1997|nu|Coal Chamber|Coal Chamber
+1999|nu industrial|Static-X|Wisconsin Death Trip
+1997|nu|Sevendust|Sevendust
+1998|nu groove|Soulfly|Soulfly
+1990|power|Blind Guardian|Tales from the Twilight World
+1992|power|Blind Guardian|Somewhere Far Beyond
+1995|power|Blind Guardian|Imaginations From the Other Side
+1998|power|Blind Guardian|Nightfall in Middle-Earth
+1995|power|Gamma Ray|Land of the Free
+1997|power|Stratovarius|Visions
+1997|power|HammerFall|Glory to the Brave
+1998|power|Rhapsody|Symphony of Enchanted Lands
+1996|power thrash|Iced Earth|The Dark Saga
+1998|power thrash|Iced Earth|Something Wicked This Way Comes
+1994|power|Helloween|Master of the Rings
+1996|power|Helloween|The Time of the Oath
+1998|power|Nightwish|Oceanborn
+1993|power|Angra|Angels Cry
+1999|power|Sonata Arctica|Ecliptica
+1992|prog|Dream Theater|Images and Words
+1994|prog|Dream Theater|Awake
+1999|prog|Dream Theater|Metropolis Pt. 2: Scenes From a Memory
+1990|prog heavy|Queensrÿche|Empire
+1991|prog|Fates Warning|Parallels
+1995|prog|Meshuggah|Destroy Erase Improve
+1998|prog|Meshuggah|Chaosphere
+1993|prog|Tool|Undertow
+1996|prog|Tool|Ænima
+1997|prog|Devin Townsend|Ocean Machine: Biomech
+1997|prog power|Symphony X|The Divine Wings of Tragedy
+1996|industrial sludge|Ministry|Filth Pig
+1994|industrial|Nine Inch Nails|The Downward Spiral
+1992|industrial|Godflesh|Pure
+1995|industrial groove|Fear Factory|Demanufacture
+1998|industrial groove|Fear Factory|Obsolete
+1995|industrial|Rammstein|Herzeleid
+1997|industrial|Rammstein|Sehnsucht
+1996|industrial|Marilyn Manson|Antichrist Superstar
+1995|industrial|KMFDM|Nihil
+1997|industrial|Strapping Young Lad|City
+1995|core|Earth Crisis|Destroy the Machines
+1997|core|Hatebreed|Satisfaction Is the Death of Desire
+1999|core|Botch|We Are the Romans
+1996|core|Integrity|Humanity Is the Devil
+1999|core prog|The Dillinger Escape Plan|Calculating Infinity
+2005|thrash|Kreator|Enemy of God
+2009|thrash|Kreator|Hordes of Chaos
+2008|thrash|Testament|The Formation of Damnation
+2004|thrash|Megadeth|The System Has Failed
+2009|thrash|Megadeth|Endgame
+2006|thrash|Slayer|Christ Illusion
+2009|thrash|Slayer|World Painted Blood
+2008|thrash|Metallica|Death Magnetic
+2005|thrash|Municipal Waste|Hazardous Mutation
+2007|thrash|Municipal Waste|The Art of Partying
+2009|thrash|Havok|Burn
+2007|thrash|Evile|Enter the Grave
+2004|thrash|Exodus|Tempo of the Damned
+2008|thrash|Toxic Holocaust|An Overdose of Death...
+2008|thrash|Warbringer|War Without End
+2002|death|Nile|In Their Darkened Shrines
+2005|death|Nile|Annihilation of the Wicked
+2004|death black|Behemoth|Demigod
+2007|death black|Behemoth|The Apostasy
+2009|death black|Behemoth|Evangelion
+2001|death prog|Opeth|Blackwater Park
+2005|death prog|Opeth|Ghost Reveries
+2008|death prog|Opeth|Watershed
+2002|death|Amon Amarth|Versus the World
+2006|death|Amon Amarth|With Oden on Our Side
+2008|death|Amon Amarth|Twilight of the Thunder God
+2000|death|In Flames|Clayman
+2006|death|In Flames|Come Clarity
+2000|death power|Children of Bodom|Follow the Reaper
+2003|death power|Children of Bodom|Hate Crew Deathroll
+2002|death|Hate Eternal|King of All Kings
+2004|death prog|Necrophagist|Epitaph
+2006|death|Decapitated|Organic Hallucinosis
+2006|death|Cannibal Corpse|Kill
+2007|death|The Black Dahlia Murder|Nocturnal
+2002|death|Bloodbath|Resurrection Through Carnage
+2005|death prog groove|Gojira|From Mars to Sirius
+2008|death prog groove|Gojira|The Way of All Flesh
+2002|death|Dark Tranquillity|Damage Done
+2009|death prog|Obscura|Cosmogenesis
+2007|black|Watain|Sworn to the Dark
+2001|black|Emperor|Prometheus: The Discipline of Fire & Demise
+2003|black|Dimmu Borgir|Death Cult Armageddon
+2004|black|Deathspell Omega|Si monumentum requires, circumspice
+2007|black|Deathspell Omega|Fas – Ite, Maledicti, in Ignem Aeternum
+2007|black|Wolves in the Throne Room|Two Hunters
+2004|black|Leviathan|Tentacles of Whorror
+2008|black|Nachtmystium|Assassins: Black Meddle, Part 1
+2006|black|Satyricon|Now, Diabolical
+2006|black|Darkthrone|The Cult Is Alive
+2004|black|Marduk|Plague Angel
+2004|black|Drudkh|Autumn Aurora
+2002|black doom|Agalloch|The Mantle
+2007|black|Alcest|Souvenirs d'un autre monde
+2005|black|1349|Hellfire
+2002|black|Immortal|Sons of Northern Darkness
+2000|doom sludge|Electric Wizard|Dopethrone
+2007|doom|Electric Wizard|Witchcult Today
+2005|doom|Candlemass|Candlemass
+2007|doom|Candlemass|King of the Grey Islands
+2006|doom|Warning|Watching From a Distance
+2002|doom|Reverend Bizarre|In the Rectory of the Bizarre Reverend
+2005|doom death|Swallow the Sun|Ghosts of Loss
+2006|doom|Ahab|The Call of the Wretched Sea
+2003|doom|Type O Negative|Life Is Killing Me
+2005|doom|Sunn O)))|Black One
+2006|doom|Katatonia|The Great Cold Distance
+2003|doom sludge|Sleep|Dopesmoker
+2002|sludge|Mastodon|Remission
+2004|sludge prog|Mastodon|Leviathan
+2006|sludge prog|Mastodon|Blood Mountain
+2009|sludge prog|Mastodon|Crack the Skye
+2007|sludge|Baroness|Red Album
+2009|sludge|Baroness|Blue Record
+2002|sludge|Isis|Oceanic
+2004|sludge|Isis|Panopticon
+2009|sludge|Kylesa|Static Tensions
+2005|sludge|High on Fire|Blessed Black Wings
+2007|sludge|High on Fire|Death Is This Communion
+2004|sludge|Neurosis|The Eye of Every Storm
+2008|sludge|Torche|Meanderthal
+2002|sludge groove|Down|Down II: A Bustle in Your Hedgerow
+2004|sludge|Clutch|Blast Tyrant
+2009|sludge|Red Fang|Red Fang
+2007|sludge|Weedeater|God Luck and Good Speed
+2006|sludge|Cult of Luna|Somewhere Along the Highway
+2001|sludge|Crowbar|Sonic Excess in Its Purest Form
+2006|sludge heavy|The Sword|Age of Winters
+2003|groove|Lamb of God|As the Palaces Burn
+2004|groove|Lamb of God|Ashes of the Wake
+2006|groove|Lamb of God|Sacrament
+2009|groove|Lamb of God|Wrath
+2003|groove thrash|Machine Head|Through the Ashes of Empires
+2007|groove thrash|Machine Head|The Blackening
+2005|groove|DevilDriver|The Fury of Our Maker's Hand
+2003|groove|Chimaira|The Impossibility of Reason
+2004|groove|Damageplan|New Found Power
+2007|groove|Five Finger Death Punch|The Way of the Fist
+2002|groove sludge|Superjoint Ritual|Use Once and Destroy
+2000|groove|Pantera|Reinventing the Steel
+2000|groove nu|Soulfly|Primitive
+2000|nu|Linkin Park|Hybrid Theory
+2003|nu|Linkin Park|Meteora
+2001|nu|Slipknot|Iowa
+2004|nu|Slipknot|Vol. 3: (The Subliminal Verses)
+2008|nu|Slipknot|All Hope Is Gone
+2001|nu|System of a Down|Toxicity
+2002|nu|System of a Down|Steal This Album!
+2005|nu|System of a Down|Mezmerize
+2005|nu|System of a Down|Hypnotize
+2000|nu|Deftones|White Pony
+2003|nu|Deftones|Deftones
+2006|nu|Deftones|Saturday Night Wrist
+2002|nu|Korn|Untouchables
+2000|nu|Disturbed|The Sickness
+2002|nu|Disturbed|Believe
+2005|nu|Disturbed|Ten Thousand Fists
+2000|nu|Papa Roach|Infest
+2000|nu|Mudvayne|L.D. 50
+2000|nu|Limp Bizkit|Chocolate Starfish and the Hot Dog Flavored Water
+2001|nu|P.O.D.|Satellite
+2001|nu|Drowning Pool|Sinner
+2001|nu|Ill Niño|Revolution Revolución
+2001|nu|Sevendust|Animosity
+2003|nu|Evanescence|Fallen
+2001|nu industrial|Static-X|Machine
+2002|power|Blind Guardian|A Night at the Opera
+2001|power|Sonata Arctica|Silence
+2003|power|Sonata Arctica|Winterheart's Guild
+2000|power|Nightwish|Wishmaster
+2002|power|Nightwish|Century Child
+2004|power|Nightwish|Once
+2003|power|DragonForce|Valley of the Damned
+2006|power|DragonForce|Inhuman Rampage
+2003|power prog|Kamelot|Epica
+2005|power prog|Kamelot|The Black Halo
+2002|power|HammerFall|Crimson Thunder
+2001|power thrash|Iced Earth|Horror Show
+2001|power|Edguy|Mandrake
+2004|power|Edguy|Hellfire Club
+2000|power|Stratovarius|Infinite
+2005|power|Sabaton|Primo Victoria
+2008|power|Sabaton|The Art of War
+2002|power|Rhapsody|Power of the Dragonflame
+2001|power|Avantasia|The Metal Opera
+2001|power|Primal Fear|Nuclear Fire
+2003|power|Epica|The Phantom Agony
+2004|power|Within Temptation|The Silent Force
+2000|prog power|Symphony X|V: The New Mythology Suite
+2007|prog power|Symphony X|Paradise Lost
+2002|prog|Dream Theater|Six Degrees of Inner Turbulence
+2003|prog|Dream Theater|Train of Thought
+2005|prog|Dream Theater|Octavarium
+2007|prog|Dream Theater|Systematic Chaos
+2001|prog|Tool|Lateralus
+2006|prog|Tool|10,000 Days
+2002|prog|Meshuggah|Nothing
+2008|prog|Meshuggah|obZen
+2002|prog|Porcupine Tree|In Absentia
+2007|prog|Porcupine Tree|Fear of a Blank Planet
+2005|prog core|Between the Buried and Me|Alaska
+2007|prog core|Between the Buried and Me|Colors
+2002|prog|Pain of Salvation|Remedy Lane
+2008|prog death|Cynic|Traced in Air
+2001|prog|Devin Townsend|Terria
+2002|core|Killswitch Engage|Alive or Just Breathing
+2004|core|Killswitch Engage|The End of Heartache
+2006|core|Killswitch Engage|As Daylight Dies
+2005|core|As I Lay Dying|Shadows Are Security
+2007|core|As I Lay Dying|An Ocean Between Us
+2001|core|Converge|Jane Doe
+2004|core|Converge|You Fail Me
+2009|core|Converge|Axe to Fall
+2005|core thrash|Trivium|Ascendancy
+2006|core thrash|Trivium|The Crusade
+2008|core thrash|Trivium|Shogun
+2004|core|Shadows Fall|The War Within
+2004|core|Unearth|The Oncoming Storm
+2005|core heavy|Bullet for My Valentine|The Poison
+2007|core|August Burns Red|Messengers
+2009|core|August Burns Red|Constellations
+2004|core prog|The Dillinger Escape Plan|Miss Machine
+2007|core prog|The Dillinger Escape Plan|Ire Works
+2002|core|Norma Jean|Bless the Martyr and Kiss the Child
+2004|core|Atreyu|The Curse
+2008|core|Bring Me the Horizon|Suicide Season
+2007|core|Parkway Drive|Horizons
+2002|core|Hatebreed|Perseverance
+2006|core|Underoath|Define the Great Line
+2003|core heavy|Avenged Sevenfold|Waking the Fallen
+2001|industrial|Rammstein|Mutter
+2004|industrial|Rammstein|Reise, Reise
+2005|industrial|Rammstein|Rosenrot
+2009|industrial|Rammstein|Liebe ist für alle da
+2001|industrial groove|Fear Factory|Digimortal
+2004|industrial groove|Fear Factory|Archetype
+2004|industrial thrash|Ministry|Houses of the Molé
+2006|industrial thrash|Ministry|Rio Grande Blood
+2000|industrial|Marilyn Manson|Holy Wood (In the Shadow of the Valley of Death)
+2003|industrial|Marilyn Manson|The Golden Age of Grotesque
+2003|industrial nu|Static-X|Shadow Zone
+2005|industrial|Nine Inch Nails|With Teeth
+2007|industrial|Nine Inch Nails|Year Zero
+2001|industrial|Godflesh|Hymns
+2005|industrial prog|Strapping Young Lad|Alien
+2001|industrial groove|Rob Zombie|The Sinister Urge
+2000|heavy|Iron Maiden|Brave New World
+2003|heavy|Iron Maiden|Dance of Death
+2006|heavy|Iron Maiden|A Matter of Life and Death
+2005|heavy|Judas Priest|Angel of Retribution
+2008|heavy|Judas Priest|Nostradamus
+2002|heavy|Dio|Killing the Dragon
+2009|heavy doom|Heaven & Hell|The Devil You Know
+2004|heavy|Motörhead|Inferno
+2001|heavy|Ozzy Osbourne|Down to Earth
+2003|heavy groove|Black Label Society|The Blessed Hellride
+2008|heavy|Enforcer|Into the Night
+2004|heavy|Saxon|Lionheart
+2005|heavy|Avenged Sevenfold|City of Evil
+2003|heavy nu|Metallica|St. Anger
+2011|thrash|Havok|Time Is Up
+2013|thrash|Havok|Unnatural Selection
+2017|thrash|Havok|Conformicide
+2012|thrash|Kreator|Phantom Antichrist
+2017|thrash|Kreator|Gods of Violence
+2012|thrash|Testament|Dark Roots of Earth
+2016|thrash|Testament|Brotherhood of the Snake
+2014|thrash|Exodus|Blood In, Blood Out
+2016|thrash|Megadeth|Dystopia
+2016|thrash heavy|Metallica|Hardwired… to Self-Destruct
+2015|thrash|Slayer|Repentless
+2011|thrash prog|Vektor|Outer Isolation
+2016|thrash prog|Vektor|Terminal Redux
+2013|thrash|Power Trip|Manifest Decimation
+2017|thrash|Power Trip|Nightmare Logic
+2012|thrash|Municipal Waste|The Fatal Feast
+2016|thrash|Sodom|Decision Day
+2010|thrash|Overkill|Ironbound
+2010|thrash|Death Angel|Relentless Retribution
+2019|thrash|Death Angel|Humanicide
+2017|thrash|Warbringer|Woe to the Vanquished
+2013|thrash|Toxic Holocaust|Chemistry of Consciousness
+2012|death prog groove|Gojira|L'Enfant sauvage
+2016|death prog groove|Gojira|Magma
+2014|death black|Behemoth|The Satanist
+2018|death|Tomb Mold|Manor of Infinite Forms
+2019|death prog|Blood Incantation|Hidden History of the Human Race
+2015|death|Horrendous|Anareta
+2017|death|Morbid Angel|Kingdoms Disdained
+2017|death|Cannibal Corpse|Red Before Black
+2011|death prog|Obscura|Omnivium
+2013|death prog|Ulcerate|Vermis
+2016|death prog|Ulcerate|Shrines of Paralysis
+2013|death prog|Gorguts|Colored Sands
+2013|death|Carcass|Surgical Steel
+2013|death|Amon Amarth|Deceiver of the Gods
+2016|death|Amon Amarth|Jomsviking
+2016|death|Dark Tranquillity|Atoma
+2016|death doom|Insomnium|Winter's Gate
+2017|death|The Black Dahlia Murder|Nightbringers
+2018|death prog|Rivers of Nihil|Where Owls Know My Name
+2012|death|Nile|At the Gate of Sethu
+2012|death|Cattle Decapitation|Monolith of Inhumanity
+2015|death|Cattle Decapitation|The Anthropocene Extinction
+2014|death prog|Fallujah|The Flesh Prevails
+2014|death thrash|Revocation|Deathless
+2014|death|Bloodbath|Grand Morbid Funeral
+2017|death|Dying Fetus|Wrong One to Fuck With
+2016|death|Venom Prison|Animus
+2013|black|Deafheaven|Sunbather
+2015|black|Deafheaven|New Bermuda
+2018|black|Deafheaven|Ordinary Corrupt Human Love
+2010|black|Watain|Lawless Darkness
+2013|black|Watain|The Wild Hunt
+2015|black|Mgła|Exercises in Futility
+2012|black|Mgła|With Hearts Toward None
+2015|black|Batushka|Litourgiya
+2011|black|Wolves in the Throne Room|Celestial Lineage
+2017|black|Wolves in the Throne Room|Thrice Woven
+2016|black|Uada|Devoid of Light
+2012|black|Panopticon|Kentucky
+2010|black|Alcest|Écailles de lune
+2016|black|Alcest|Kodama
+2015|black prog|Dødheimsgard|A Umbra Omega
+2014|black|Mayhem|Esoteric Warfare
+2019|black|Mayhem|Daemon
+2018|black|Immortal|Northern Chaos Gods
+2011|black|Liturgy|Aesthethica
+2015|black|Der Weg einer Freiheit|Stellar
+2012|doom|Pallbearer|Sorrow and Extinction
+2014|doom|Pallbearer|Foundations of Burden
+2017|doom|Pallbearer|Heartless
+2013|doom|Windhand|Soma
+2011|doom sludge|Yob|Atma
+2014|doom sludge|Yob|Clearing the Path to Ascend
+2018|doom sludge|Yob|Our Raw Heart
+2010|doom|Electric Wizard|Black Masses
+2014|doom|Electric Wizard|Time to Die
+2017|doom|Bell Witch|Mirror Reaper
+2016|doom|Khemmis|Hunted
+2018|doom|Khemmis|Desolation
+2019|doom|Candlemass|The Door to Doom
+2015|doom|Pentagram|Curious Volume
+2015|doom|Paradise Lost|The Plague Within
+2017|doom death|Paradise Lost|Medusa
+2015|doom|Crypt Sermon|Out of the Garden
+2015|doom death|Swallow the Sun|Songs From the North I, II & III
+2011|doom heavy|Uncle Acid & the Deadbeats|Blood Lust
+2013|doom|Cathedral|The Last Spire
+2012|doom|Ahab|The Giant
+2015|doom sludge|Monolord|Vænir
+2014|doom sludge|Conan|Blood Eagle
+2011|sludge prog|Mastodon|The Hunter
+2014|sludge prog|Mastodon|Once More 'Round the Sun
+2017|sludge prog|Mastodon|Emperor of Sand
+2012|sludge|Baroness|Yellow & Green
+2015|sludge|Baroness|Purple
+2019|sludge|Baroness|Gold & Grey
+2010|sludge|Kylesa|Spiral Shadow
+2010|sludge|High on Fire|Snakes for the Divine
+2012|sludge|High on Fire|De Vermis Mysteriis
+2015|sludge|High on Fire|Luminiferous
+2018|sludge|High on Fire|Electric Messiah
+2011|sludge|Red Fang|Murder the Mountains
+2013|sludge|Red Fang|Whales and Leeches
+2012|sludge|Torche|Harmonicraft
+2014|sludge doom|Thou|Heathen
+2017|sludge doom|Primitive Man|Caustic
+2013|sludge|Inter Arma|Sky Burial
+2010|sludge heavy|Kvelertak|Kvelertak
+2013|sludge heavy|Kvelertak|Meir
+2014|sludge|Eyehategod|Eyehategod
+2011|sludge|Crowbar|Sever the Wicked Hand
+2013|sludge|Cult of Luna|Vertikal
+2019|sludge|Cult of Luna|A Dawn to Fear
+2012|sludge|Neurosis|Honor Found in Decay
+2016|sludge|Neurosis|Fires Within Fires
+2015|sludge|Elder|Lore
+2018|sludge doom|Sleep|The Sciences
+2015|sludge|Weedeater|Goliathan
+2012|groove|Lamb of God|Resolution
+2015|groove|Lamb of God|VII: Sturm und Drang
+2011|groove thrash|Machine Head|Unto the Locust
+2014|groove thrash|Machine Head|Bloodstone & Diamonds
+2011|groove|Five Finger Death Punch|American Capitalist
+2011|groove|DevilDriver|Beast
+2017|groove thrash|Sepultura|Machine Messiah
+2016|groove prog|Jinjer|King of Everything
+2019|groove prog|Jinjer|Macro
+2011|groove|Chimaira|The Age of Hell
+2015|groove|Soulfly|Archangel
+2010|groove heavy|Black Label Society|Order of the Black
+2014|nu|Slipknot|.5: The Gray Chapter
+2019|nu|Slipknot|We Are Not Your Kind
+2011|nu industrial|Korn|The Path of Totality
+2016|nu|Korn|The Serenity of Suffering
+2019|nu|Korn|The Nothing
+2012|nu|Deftones|Koi No Yokan
+2016|nu|Deftones|Gore
+2010|nu|Deftones|Diamond Eyes
+2010|nu|Linkin Park|A Thousand Suns
+2012|nu|Linkin Park|Living Things
+2014|nu|Linkin Park|The Hunting Party
+2010|nu|Disturbed|Asylum
+2015|nu|Disturbed|Immortalized
+2012|nu heavy|Stone Sour|House of Gold & Bones, Part 1
+2011|nu|Limp Bizkit|Gold Cobra
+2017|nu core|Motionless in White|Graveyard Shift
+2014|nu core|Issues|Issues
+2015|nu|Coal Chamber|Rivals
+2010|power|Sabaton|Coat of Arms
+2012|power|Sabaton|Carolus Rex
+2014|power|Sabaton|Heroes
+2016|power|Sabaton|The Last Stand
+2019|power|Sabaton|The Great War
+2011|power|Nightwish|Imaginaerum
+2015|power|Nightwish|Endless Forms Most Beautiful
+2011|power|Powerwolf|Blood of the Saints
+2013|power|Powerwolf|Preachers of the Night
+2015|power|Powerwolf|Blessed & Possessed
+2018|power|Powerwolf|The Sacrament of Sin
+2010|power|Blind Guardian|At the Edge of Time
+2015|power|Blind Guardian|Beyond the Red Mirror
+2014|power|DragonForce|Maximum Overload
+2012|power prog|Kamelot|Silverthorn
+2015|power prog|Kamelot|Haven
+2015|power|Helloween|My God-Given Right
+2016|power|Avantasia|Ghostlights
+2013|power|Gloryhammer|Tales From the Kingdom of Fife
+2015|power|Gloryhammer|Space 1992: Rise of the Chaos Wizards
+2011|power|HammerFall|Infected
+2014|power|Epica|The Quantum Enigma
+2013|power|Stratovarius|Nemesis
+2015|power heavy|Visigoth|The Revenant King
+2017|power|Unleash the Archers|Apex
+2014|power thrash|Iced Earth|Plagues of Babylon
+2011|prog|Opeth|Heritage
+2014|prog|Opeth|Pale Communion
+2016|prog|Opeth|Sorceress
+2019|prog|Opeth|In Cauda Venenum
+2011|prog|Dream Theater|A Dramatic Turn of Events
+2019|prog|Dream Theater|Distance Over Time
+2019|prog|Tool|Fear Inoculum
+2012|prog|Periphery|Periphery II: This Time It's Personal
+2016|prog|Periphery|Periphery III: Select Difficulty
+2013|prog|TesseracT|Altered State
+2013|prog|Haken|The Mountain
+2016|prog|Haken|Affinity
+2018|prog|Haken|Vector
+2013|prog|Leprous|Coal
+2015|prog|Leprous|The Congregation
+2017|prog|Leprous|Malina
+2012|prog core|Between the Buried and Me|The Parallax II: Future Sequence
+2011|prog|Animals as Leaders|Weightless
+2014|prog|Animals as Leaders|The Joy of Motion
+2012|prog|Devin Townsend Project|Epicloud
+2012|prog|Meshuggah|Koloss
+2016|prog|Meshuggah|The Violent Sleep of Reason
+2019|prog|Soen|Lotus
+2013|prog core|Protest the Hero|Volition
+2012|prog death|Ne Obliviscaris|Portal of I
+2014|core|Architects|Lost Forever // Lost Together
+2016|core|Architects|All Our Gods Have Abandoned Us
+2018|core|Architects|Holy Hell
+2013|core|Bring Me the Horizon|Sempiternal
+2015|core nu|Bring Me the Horizon|That's the Spirit
+2010|core|Parkway Drive|Deep Blue
+2012|core|Parkway Drive|Atlas
+2015|core|Parkway Drive|Ire
+2018|core heavy|Parkway Drive|Reverence
+2013|core|Killswitch Engage|Disarm the Descent
+2016|core|Killswitch Engage|Incarnate
+2019|core|Killswitch Engage|Atonement
+2011|core|August Burns Red|Leveler
+2013|core|August Burns Red|Rescue & Restore
+2010|core prog|The Dillinger Escape Plan|Option Paralysis
+2013|core prog|The Dillinger Escape Plan|One of Us Is the Killer
+2016|core prog|The Dillinger Escape Plan|Dissociation
+2012|core|Converge|All We Love We Leave Behind
+2017|core|Converge|The Dusk in Us
+2014|core|Code Orange|I Am King
+2017|core industrial|Code Orange|Forever
+2012|core|Every Time I Die|Ex Lives
+2016|core|Every Time I Die|Low Teens
+2016|core|Knocked Loose|Laugh Tracks
+2019|core|Knocked Loose|A Different Shade of Blue
+2011|core thrash|Trivium|In Waves
+2017|core thrash|Trivium|The Sin and the Sentence
+2015|core|Northlane|Node
+2014|core|Beartooth|Disgusting
+2019|industrial|Rammstein|Rammstein
+2012|industrial thrash|Ministry|Relapse
+2018|industrial thrash|Ministry|AmeriKKKant
+2010|industrial groove|Fear Factory|Mechanize
+2012|industrial groove|Fear Factory|The Industrialist
+2015|industrial groove|Fear Factory|Genexus
+2012|industrial|Marilyn Manson|Born Villain
+2015|industrial|Marilyn Manson|The Pale Emperor
+2017|industrial|Marilyn Manson|Heaven Upside Down
+2013|industrial|Nine Inch Nails|Hesitation Marks
+2014|industrial sludge|Godflesh|A World Lit Only by Fire
+2017|industrial sludge|Godflesh|Post Self
+2013|industrial groove|Rob Zombie|Venomous Rat Regeneration Vendor
+2018|industrial|Author & Punisher|Beastland
+2015|industrial|Lindemann|Skills in Pills
+2019|industrial|3Teeth|Metawar
+2010|heavy|Ghost|Opus Eponymous
+2013|heavy|Ghost|Infestissumam
+2015|heavy|Ghost|Meliora
+2018|heavy|Ghost|Prequelle
+2010|heavy|Iron Maiden|The Final Frontier
+2015|heavy|Iron Maiden|The Book of Souls
+2014|heavy|Judas Priest|Redeemer of Souls
+2018|heavy|Judas Priest|Firepower
+2013|heavy doom|Black Sabbath|13
+2013|heavy|Enforcer|Death by Fire
+2015|heavy|Night Demon|Curse the Night
+2013|heavy|Satan|Life Sentence
+2015|heavy|Saxon|Battering Ram
+2013|heavy|Volbeat|Outlaw Gentlemen & Shady Ladies
+2010|heavy|Avenged Sevenfold|Nightmare
+2013|heavy|Avenged Sevenfold|Hail to the King
+2015|heavy|Motörhead|Bad Magic
+2010|heavy|Accept|Blood of the Nations
+2014|heavy|Accept|Blind Rage
+2016|heavy power|Eternal Champion|The Armor of Ire
+2015|heavy black|Tribulation|The Children of the Night
+`;
+const CATALOG = CATALOG_TEXT.trim().split("\n").map(l => {
+  const [year, genres, artist, title] = l.split("|");
+  return { year: +year, genres: genres.split(" "), artist, title };
+});
+
+const GENRES = {
+  all: { label: "All genres", tags: ["heavy metal", "thrash metal", "death metal", "black metal", "doom metal"] },
+  heavy: { label: "Heavy / NWOBHM", tags: ["heavy metal", "nwobhm", "traditional heavy metal"] },
+  thrash: { label: "Thrash", tags: ["thrash metal", "speed metal"] },
+  death: { label: "Death", tags: ["death metal", "melodic death metal", "technical death metal"] },
+  black: { label: "Black", tags: ["black metal", "atmospheric black metal"] },
+  doom: { label: "Doom", tags: ["doom metal", "funeral doom metal", "death-doom"] },
+  sludge: { label: "Sludge / Stoner", tags: ["sludge metal", "stoner metal", "post-metal"] },
+  power: { label: "Power / Symphonic", tags: ["power metal", "symphonic metal"] },
+  prog: { label: "Progressive", tags: ["progressive metal", "djent"] },
+  groove: { label: "Groove", tags: ["groove metal"] },
+  nu: { label: "Nu metal", tags: ["nu metal"] },
+  core: { label: "Metalcore", tags: ["metalcore", "mathcore"] },
+  industrial: { label: "Industrial", tags: ["industrial metal"] },
+};
+// number-like keys sort first in JS objects, so keep the menu order explicit
+const DECADE_ORDER = ["all", "1970", "1980", "1990", "2000", "2010"];
+const DECADES = {
+  all: { label: "All decades", from: 1970, to: 2019 },
+  1970: { label: "70s", from: 1970, to: 1979 },
+  1980: { label: "80s", from: 1980, to: 1989 },
+  1990: { label: "90s", from: 1990, to: 1999 },
+  2000: { label: "2000s", from: 2000, to: 2009 },
+  2010: { label: "2010s", from: 2010, to: 2019 },
+};
 /* ---------- Layouts ----------
    Coordinates are half-tile units: a tile at (x,y,z) covers x..x+2, y..y+2 on level z.
    Tiles may sit half a tile apart in either direction on the same level (staggered rows
@@ -1124,7 +1938,8 @@ function newGame() {
   $("lastInfo").innerHTML = `<div class="album">Tap free tiles to move them into the tray.</div>`;
   $("overlay").classList.remove("show");
   const albumsUsed = new Set(facePairs).size;
-  $("layoutName").textContent = `${layoutName}, ${Math.max(...geom.map(t => t.z)) + 1} levels, ${albumsUsed} albums`;
+  const fl = filterLabel();
+  $("layoutName").textContent = `${fl ? fl + " · " : ""}${layoutName}, ${Math.max(...geom.map(t => t.z)) + 1} levels, ${albumsUsed} albums`;
   status("Two matching covers in the tray clear. A fourth unmatched cover loses.");
   render();
   autoFit();
@@ -1639,12 +2454,32 @@ $("importAdd").onclick = e => {
   } catch (err) { $("importErr").textContent = err.message; }
 };
 
+/* Category + decade menus */
+const MIN_ALBUMS = 6;
+for (const [k, v] of Object.entries(GENRES)) $("genreSel").add(new Option(v.label, k));
+function updateDecadeOptions() {
+  const genre = $("genreSel").value;
+  $("decadeSel").replaceChildren();
+  for (const k of DECADE_ORDER) {
+    const v = DECADES[k];
+    const n = k === "all" ? 1 : catalogFor(genre, k).length;
+    const o = new Option(n ? v.label : `${v.label} (none)`, k);
+    o.disabled = !n;
+    $("decadeSel").add(o);
+  }
+}
+const filterLabel = () => {
+  const g = $("genreSel").value, dd = $("decadeSel").value;
+  if (g === "all" && dd === "all") return "";
+  return [g === "all" ? "" : GENRES[g].label, dd === "all" ? "" : DECADES[dd].label].filter(Boolean).join(", ");
+};
+
 /* Settings (remembered between sessions) */
 const SETTINGS_KEY = "metal-mahjong-settings";
 function saveSettings() {
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify({
-      size: $("sizeSel").value, copies: $("copiesSel").value, side: $("sideBlock").checked, autoDelay: $("autoPick").value, layout: $("layoutSel").value,
+      genre: $("genreSel").value, decade: $("decadeSel").value, size: $("sizeSel").value, copies: $("copiesSel").value, side: $("sideBlock").checked, autoDelay: $("autoPick").value, layout: $("layoutSel").value,
       diff: $("diffSel").value, music: $("musSource").value, spotify: $("spotifyUrl").value.trim()
     }));
   } catch (_) {}
@@ -1653,6 +2488,9 @@ try {
   const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
   if (s.copies) $("copiesSel").value = s.copies;
   if (s.size) $("sizeSel").value = s.size;
+  if (s.genre && GENRES[s.genre]) $("genreSel").value = s.genre;
+  updateDecadeOptions();
+  if (s.decade && DECADES[s.decade] && catalogFor($("genreSel").value, s.decade).length) $("decadeSel").value = s.decade;
   if (s.diff) $("diffSel").value = s.diff;
   if (typeof s.side === "boolean") $("sideBlock").checked = s.side;
   if (s.autoDelay && [...$("autoPick").options].some(o => o.value === s.autoDelay)) $("autoPick").value = s.autoDelay;
@@ -1660,12 +2498,20 @@ try {
   if (s.spotify) { $("spotifyUrl").value = s.spotify; spotifyEmbed(s.spotify); }
   if (s.music && [...$("musSource").options].some(o => o.value === s.music)) $("musSource").value = s.music;
 } catch (_) {}
+if (!$("decadeSel").options.length) updateDecadeOptions();
 SIDE_BLOCKING = $("sideBlock").checked;
 showMusicSource();
 
 const restart = () => { saveSettings(); newGame(); };
 $("layoutSel").onchange = restart;
-$("sizeSel").onchange = restart;
+$("sizeSel").onchange = () => { saveSettings(); boot(); };
+$("genreSel").onchange = () => {
+  updateDecadeOptions();                           // keeps "All decades" if the old decade has nothing
+  const prev = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}").decade;
+  if (prev && catalogFor($("genreSel").value, prev).length) $("decadeSel").value = prev;
+  saveSettings(); boot();
+};
+$("decadeSel").onchange = () => { saveSettings(); boot(); };
 /* Phone: every option lives in a menu under the ☰ button, so the tray and board get the screen. */
 function setMenuOpen(open) {
   $("menuPanel").classList.toggle("open", open);
@@ -1702,20 +2548,38 @@ $("zoomIn").onclick = () => setZoom(zoom + .1);
 $("zoomOut").onclick = () => setZoom(zoom - .1);
 $("zoomFit").onclick = () => autoFit();
 
+let bootId = 0;
 async function boot(force = false) {
-  document.querySelectorAll("header button, header select").forEach(b => b.disabled = true);
+  const my = ++bootId;
+  applyBoardSize();
+  const genre = $("genreSel").value, decade = $("decadeSel").value;
+  const need = SMALL_BOARD ? 32 : FACES_NEEDED;
+  document.querySelectorAll("#menuPanel button, #menuPanel select").forEach(b => b.disabled = true);
   try {
-    covers = await loadCovers(force);
-    if (!covers.length) throw new Error("No covers found");
+    const pool = await loadPool(genre, decade, need, force);
+    if (my !== bootId) return;                    // the filter changed while loading
+    if (pool.length < MIN_ALBUMS) {
+      status(`Only ${pool.length} albums with cover art for ${filterLabel() || "this filter"}. Pick another category or decade.`);
+      return;
+    }
+    covers = pool;
     newGame();
-    if (covers.length < FACES_NEEDED)
-      status(`${covers.length} albums loaded. Big boards will repeat some albums; Reload covers to try for more.`);
+    const pairsPerAlbum = +$("copiesSel").value / 2;
+    if (pool.length * pairsPerAlbum < tiles.length / 2)
+      status(`Only ${pool.length} albums for ${filterLabel() || "this filter"}, so some repeat on this board.`);
+    topUpPool(genre, decade, fresh => {
+      if (my !== bootId) return;
+      const have = new Set(covers.map(c => c.id));
+      covers.push(...fresh.filter(e => !have.has(e.id)));   // appended, so faces in play keep their index
+    }).catch(e => console.warn(e));
   } catch (e) {
     console.error(e);
-    status(`Couldn't load covers (${e.message}). Open this through a local server and use Reload covers.`);
+    status(`Couldn't load covers (${e.message}). Use Reload covers to try again.`);
   } finally {
-    document.querySelectorAll("header button, header select").forEach(b => b.disabled = false);
-    $("btnUndo").disabled = !history.length;
+    if (my === bootId) {
+      document.querySelectorAll("#menuPanel button, #menuPanel select").forEach(b => b.disabled = false);
+      $("btnUndo").disabled = !history.length;
+    }
   }
 }
 renderTray();
