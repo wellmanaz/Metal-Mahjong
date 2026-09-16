@@ -144,6 +144,16 @@ dialog input { font-family: inherit; font-size: 16px; }
 .credit { padding: 0 20px 12px; color: #6d7076; font-size: 14px; }
 .credit a { color: inherit; }
 .settings { display: contents; }
+#btnStart {
+  background: linear-gradient(#a52323, #7a1616); border: 1px solid #c94040; border-bottom-color: #3a0808;
+  color: #fff; font-size: 18px; letter-spacing: .02em; padding: 9px 14px;
+}
+#btnStart:hover { background: linear-gradient(#b92a2a, #8a1a1a); }
+#btnStart.pending { animation: startPulse 1.1s ease-in-out infinite; }
+@keyframes startPulse {
+  50% { box-shadow: 0 0 0 3px var(--brass), 0 0 18px 2px rgba(200,60,60,.9); }
+}
+@media (prefers-reduced-motion: reduce) { #btnStart.pending { animation: none; box-shadow: 0 0 0 3px var(--brass); } }
 .phoneOnly { display: none; }
 body.small .tile {
   border-radius: 6px;
@@ -168,6 +178,8 @@ body.phone .controls button, body.phone .controls select { padding: 8px 6px; fon
 body.phone #btnNew, body.phone #btnHint, body.phone #btnShuffle, body.phone #btnUndo { order: -1; }
 body.phone .settings { display: flex; flex-wrap: wrap; gap: 6px; grid-column: 1 / -1; }
 body.phone .settings > select, body.phone .settings > .toggle, body.phone .settings > button { flex: 1 1 45%; }
+body.phone #btnStart { flex: 1 1 100%; order: 50; font-size: 18px; padding: 11px; }
+body.phone #btnReload, body.phone .settings > .musTop { order: 60; }
 body.phone .controls .music { grid-column: 1 / -1; width: 100%; border-top: 1px solid #3a3e44; padding-top: 8px; }
 body.phone .music select { width: 100%; }
 body.phone .trayRow { padding: 4px 10px 6px; gap: 4px; }
@@ -209,9 +221,11 @@ body.wide .stats { flex-direction: column; gap: 2px; }
 body.wide .controls { margin-left: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; align-items: stretch; }
 body.wide .controls select, body.wide .controls .toggle, body.wide #btnImport, body.wide #btnReload, body.wide .zoom { grid-column: 1 / -1; }
 body.wide #btnNew, body.wide #btnHint, body.wide #btnShuffle, body.wide #btnUndo { order: -1; }
-body.wide .zoom { order: 1; display: flex; }
+body.wide #btnStart { order: 1; grid-column: 1 / -1; }
+body.wide #autoPick { order: 2; }
+body.wide .zoom { order: 2; display: flex; }
 body.wide .zoom button { flex: 1; }
-body.wide #btnImport, body.wide #btnReload { order: 2; }
+body.wide #btnImport, body.wide #btnReload { order: 3; }
 body.wide .controls .toggle { padding: 4px 2px; }
 body.wide .trayRow {
   grid-column: 3; grid-row: 1 / span 2;
@@ -263,6 +277,7 @@ body.wide .credit { grid-column: 2; grid-row: 2; text-align: center; padding: 4p
       <option value=".9">Brutal</option>
     </select>
     <label class="toggle"><input type="checkbox" id="sideBlock" checked> Side blocking</label>
+    <button id="btnStart" type="button">▶ Start game</button>
     <select id="autoPick" aria-label="Auto-pick" title="If you don't pick a tile in time, the best move is made for you">
       <option value="0" selected>Auto-pick: off</option>
       <option value="15">Auto-pick after 15s</option>
@@ -1260,6 +1275,218 @@ const CATALOG_TEXT = `
 2014|heavy|Accept|Blind Rage
 2016|heavy power|Eternal Champion|The Armor of Ire
 2015|heavy black|Tribulation|The Children of the Night
+2021|heavy|Iron Maiden|Senjutsu
+2024|heavy|Judas Priest|Invincible Shield
+2022|heavy|Ghost|Impera
+2025|heavy|Ghost|Skeletá
+2020|heavy|Ozzy Osbourne|Ordinary Man
+2022|heavy|Ozzy Osbourne|Patient Number 9
+2023|heavy thrash|Metallica|72 Seasons
+2021|heavy groove|Black Label Society|Doom Crew Inc.
+2022|heavy|Saxon|Carpe Diem
+2021|heavy|Volbeat|Servant of the Mind
+2023|heavy prog|Avenged Sevenfold|Life Is But a Dream…
+2022|heavy|Night Demon|Year of the Demon
+2021|heavy|Unto Others|Strength
+2020|heavy power|Eternal Champion|Ravening Iron
+2022|thrash|Kreator|Hate Über Alles
+2020|thrash|Testament|Titans of Creation
+2025|thrash|Testament|Para Bellum
+2022|thrash|Megadeth|The Sick, the Dying… and the Dead!
+2021|thrash|Exodus|Persona Non Grata
+2020|thrash|Havok|V
+2022|thrash|Municipal Waste|Electrified Brain
+2020|thrash|Sodom|Genesis XIX
+2020|thrash|Warbringer|Weapons of Tomorrow
+2021|thrash core|Enforced|Kill Grid
+2023|thrash|Overkill|Scorched
+2022|thrash|Destruction|Diabolical
+2020|thrash|Heathen|Empire of the Blind
+2023|thrash black|Hellripper|Warlocks Grim & Withered Hags
+2022|death prog|Blood Incantation|Timewave Zero
+2024|death prog|Blood Incantation|Absolute Elsewhere
+2021|death prog groove|Gojira|Fortitude
+2021|death|Cannibal Corpse|Violence Unimagined
+2023|death|Cannibal Corpse|Chaos Horrific
+2021|death|Carcass|Torn Arteries
+2020|death|Undeath|Lesions of a Different Kind
+2022|death|Undeath|It's Time…to Rise From the Grave
+2021|death|Frozen Soul|Crypt of Ice
+2023|death|Tomb Mold|The Enduring Spirit
+2021|death|Sanguisugabogg|Tortured Whole
+2020|death prog|Ulcerate|Stare Into Death and Be Still
+2024|death prog|Ulcerate|Cutting the Throat of God
+2020|death black prog|Imperial Triumphant|Alphaville
+2022|death black prog|Imperial Triumphant|Spirit of Ecstasy
+2023|death|Obituary|Dying of Everything
+2023|death|Dying Fetus|Make Them Beg for Death
+2024|death|The Black Dahlia Murder|Servitude
+2022|death|Amon Amarth|The Great Heathen Army
+2020|death|Dark Tranquillity|Moment
+2024|death|Dark Tranquillity|Endtime Signals
+2021|death prog|Rivers of Nihil|The Work
+2023|death|Cattle Decapitation|Terrasite
+2024|death|Gatecreeper|Dark Superstition
+2022|death|Bloodbath|Survival of the Sickest
+2023|death core|200 Stab Wounds|Manual Manic Procedures
+2021|death prog|Obscura|A Valediction
+2023|death prog|Ne Obliviscaris|Exul
+2022|death black|Behemoth|Opvs Contra Natvram
+2021|black|Deafheaven|Infinite Granite
+2025|black|Deafheaven|Lonely People With Power
+2021|black|Wolves in the Throne Room|Primordial Arcana
+2021|black|Spectral Wound|A Diabolic Thirst
+2022|black|Blackbraid|Blackbraid I
+2023|black|Blackbraid|Blackbraid II
+2021|black|Panopticon|...And Again Into the Light
+2022|black|Watain|The Agony & Ecstasy of Watain
+2020|black|Uada|Djinn
+2024|black|Alcest|Les Chants de l'Aurore
+2020|black|Wayfarer|A Romance With Violence
+2022|black|Gaerea|Mirage
+2021|black|Darkthrone|Eternal Hails……
+2022|black|Darkthrone|Astral Fortress
+2023|black|Immortal|War Against All
+2023|black|Dawn Ray'd|To Know the Light
+2020|doom|Pallbearer|Forgotten Days
+2024|doom|Pallbearer|Mind Burns Alive
+2021|doom|Khemmis|Deceiver
+2020|doom heavy|Spirit Adrift|Enlightened in Eternity
+2023|doom|Bell Witch|Future's Shadow Part 1: The Clandestine Gate
+2022|doom|Candlemass|Sweet Evil Sun
+2020|doom death|Paradise Lost|Obsidian
+2021|doom heavy|Green Lung|Black Harvest
+2022|doom|Messa|Close
+2021|doom sludge|King Woman|Celestial Blues
+2020|doom death|My Dying Bride|The Ghost of Orion
+2021|doom death|Swallow the Sun|Moonflowers
+2023|doom prog|Katatonia|Sky Void of Stars
+2024|doom heavy|Crypt Sermon|The Stygian Rose
+2022|sludge doom|Mizmor & Thou|Myopia
+2021|sludge prog|Mastodon|Hushed and Grim
+2024|sludge|High on Fire|Cometh the Storm
+2023|sludge|Baroness|Stone
+2022|sludge industrial|Chat Pile|God's Country
+2024|sludge doom|Thou|Umbilical
+2020|sludge doom|Primitive Man|Immersion
+2022|sludge|Cult of Luna|The Long Road North
+2023|sludge|Inter Arma|New Heaven
+2021|sludge|Red Fang|Arrows
+2022|sludge|Crowbar|Zero and Below
+2021|sludge|Eyehategod|A History of Nomadic Behavior
+2022|sludge doom|Elder|Innate Passage
+2020|sludge heavy|Kvelertak|Splid
+2023|sludge heavy|Kvelertak|Endling
+2021|sludge doom|Monolord|Your Time to Shine
+2022|sludge|Mantar|Pain Is Forever and This Is the End
+2022|sludge doom|Conan|Evidence of Immortality
+2022|power|Sabaton|The War to End All Wars
+2025|power|Sabaton|Legends
+2021|power|Powerwolf|Call of the Wild
+2024|power|Powerwolf|Wake Up the Wicked
+2020|power|Nightwish|Human. :II: Nature.
+2024|power|Nightwish|Yesterwynde
+2022|power|Blind Guardian|The God Machine
+2021|power|Helloween|Helloween
+2024|power|DragonForce|Warp Speed Warriors
+2020|power|Unleash the Archers|Abyss
+2024|power|Unleash the Archers|Phantoma
+2023|power|Gloryhammer|Return to the Kingdom of Fife
+2023|power prog|Kamelot|The Awakening
+2022|power|Avantasia|A Paranormal Evening With the Moonflower Society
+2021|power|Epica|Omega
+2025|power|Epica|Aspiral
+2022|power|HammerFall|Hammer of Dawn
+2022|power|Stratovarius|Survive
+2024|power|Sonata Arctica|Clear Cold Beyond
+2021|power|Seven Spires|Gods of Debauchery
+2024|prog|Opeth|The Last Will and Testament
+2021|prog|Dream Theater|A View From the Top of the World
+2025|prog|Dream Theater|Parasomnia
+2020|prog|Haken|Virus
+2023|prog|Haken|Fauna
+2021|prog|Leprous|Aphelion
+2024|prog|Leprous|Melodies of Atonement
+2023|prog|Periphery|Periphery V: Djent Is Not a Genre
+2023|prog|TesseracT|War of Being
+2021|prog core|Between the Buried and Me|Colors II
+2021|prog|Soen|Imperial
+2023|prog|Soen|Memorial
+2020|prog|Caligula's Horse|Rise Radiant
+2024|prog|Caligula's Horse|Charcoal Grace
+2022|prog|Animals as Leaders|Parrhesia
+2022|prog|Devin Townsend|Lightwork
+2022|prog|Meshuggah|Immutable
+2021|prog death|Cynic|Ascension Codes
+2021|prog|Vola|Witness
+2021|prog nu|Sleep Token|This Place Will Become Your Tomb
+2023|prog nu|Sleep Token|Take Me Back to Eden
+2020|prog industrial|Igorrr|Spirituality and Distortion
+2020|groove|Lamb of God|Lamb of God
+2022|groove|Lamb of God|Omens
+2021|groove prog|Jinjer|Wallflowers
+2025|groove prog|Jinjer|Duél
+2022|groove thrash|Machine Head|Øf Kingdøm and Crøwn
+2025|groove thrash|Machine Head|Unatøned
+2020|groove thrash|Sepultura|Quadra
+2020|groove|Five Finger Death Punch|F8
+2022|groove|Five Finger Death Punch|AfterLife
+2020|groove|DevilDriver|Dealing With Demons I
+2022|groove|Soulfly|Totem
+2022|groove core|Fit for an Autopsy|Oh What the Future Holds
+2020|groove core|Hatebreed|Weight of the False Self
+2022|nu|Slipknot|The End, So Far
+2022|nu|Korn|Requiem
+2020|nu|Deftones|Ohms
+2025|nu|Deftones|Private Music
+2024|nu|Linkin Park|From Zero
+2020|nu core|Tallah|Matriphagy
+2020|nu industrial|Static-X|Project: Regeneration, Vol. 1
+2022|nu|Disturbed|Divisive
+2021|nu|Limp Bizkit|Still Sucks
+2022|nu|Papa Roach|Ego Trip
+2020|nu core|Bring Me the Horizon|Post Human: Survival Horror
+2023|nu|Kim Dracula|A Gradual Decline in Morale
+2020|nu core|Loathe|I Let It In and It Took Everything
+2021|nu|Tetrarch|Unstable
+2021|core prog|Spiritbox|Eternal Blue
+2025|core prog|Spiritbox|Tsunami Sea
+2024|core|Knocked Loose|You Won't Go Before You're Supposed To
+2021|core|Architects|For Those That Wish to Exist
+2022|core|Architects|The Classic Symptoms of a Broken Spirit
+2025|core|Architects|The Sky, the Earth & All Between
+2024|core nu|Bring Me the Horizon|Post Human: Nex Gen
+2022|core|Parkway Drive|Darker Still
+2020|core|Polaris|The Death of Me
+2023|core|Polaris|Fatalism
+2025|core|Killswitch Engage|This Consequence
+2020|core|August Burns Red|Guardians
+2023|core|August Burns Red|Death Below
+2021|core doom|Converge|Bloodmoon: I
+2021|core|Every Time I Die|Radical
+2022|core|Counterparts|A Eulogy for Those Still Here
+2023|core|Currents|The Death We Seek
+2021|core thrash|Trivium|In the Court of the Dragon
+2020|core thrash|Trivium|What the Dead Men Say
+2021|core|Wage War|Manic
+2023|core|Invent Animate|Heavener
+2022|core|Northlane|Obsidian
+2024|core prog|Erra|Cure
+2022|core|Motionless in White|Scoring the End of the World
+2021|core|Ice Nine Kills|The Silver Scream 2: Welcome to Horrorwood
+2022|industrial|Rammstein|Zeit
+2021|industrial thrash|Ministry|Moral Hygiene
+2024|industrial thrash|Ministry|HOPIUMFORTHEMASSES
+2020|industrial core|Code Orange|Underneath
+2023|industrial core|Code Orange|The Above
+2022|industrial sludge|Author & Punisher|Krüller
+2021|industrial groove|Fear Factory|Aggression Continuum
+2020|industrial|Marilyn Manson|We Are Chaos
+2024|industrial|Marilyn Manson|One Assassination Under God - Chapter 1
+2023|industrial|3Teeth|EndEx
+2021|industrial groove|Rob Zombie|The Lunar Injection Kool Aid Eclipse Conspiracy
+2023|industrial sludge|Godflesh|Purge
+2025|industrial prog|Igorrr|Amen
 `;
 const CATALOG = CATALOG_TEXT.trim().split("\n").map(l => {
   const [year, genres, artist, title] = l.split("|");
@@ -1282,14 +1509,15 @@ const GENRES = {
   industrial: { label: "Industrial", tags: ["industrial metal"] },
 };
 // number-like keys sort first in JS objects, so keep the menu order explicit
-const DECADE_ORDER = ["all", "1970", "1980", "1990", "2000", "2010"];
+const DECADE_ORDER = ["all", "1970", "1980", "1990", "2000", "2010", "2020"];
 const DECADES = {
-  all: { label: "All decades", from: 1970, to: 2019 },
+  all: { label: "All decades", from: 1970, to: 2029 },
   1970: { label: "70s", from: 1970, to: 1979 },
   1980: { label: "80s", from: 1980, to: 1989 },
   1990: { label: "90s", from: 1990, to: 1999 },
   2000: { label: "2000s", from: 2000, to: 2009 },
   2010: { label: "2010s", from: 2010, to: 2019 },
+  2020: { label: "2020s", from: 2020, to: 2029 },
 };
 /* ---------- Layouts ----------
    Coordinates are half-tile units: a tile at (x,y,z) covers x..x+2, y..y+2 on level z.
@@ -2209,33 +2437,62 @@ function jsonp(url, timeout = 8000) {
   });
 }
 
-/* Album hits, most popular first. */
+/* Album hits, most popular first. Lookup order:
+   1) Deezer search for "artist title", filtered to that album
+   2) iTunes search for the album
+   3) Deezer top tracks for the artist (so a match always changes the song
+      when the band is on Deezer at all). */
 const hitsCache = {};
-async function albumHits(c) {
+const deezerTrack = x => ({ title: x.title_short || x.title, artist: x.artist.name, album: x.album?.title || "", preview: x.preview, rank: x.rank || 0 });
+function rankedUnique(list) {
+  const seen = new Set();
+  return list.sort((a, b) => b.rank - a.rank).filter(x => {
+    const k = norm(x.title);
+    if (!x.preview || seen.has(k)) return false;
+    seen.add(k); return true;
+  });
+}
+async function albumHits(c, fresh = false) {
   const cached = hitsCache[c.id];
-  if (cached && Date.now() - cached.at < 20 * 60 * 1000) return cached.list;   // Deezer preview links expire
-  const na = norm(c.artist).slice(0, 8), nt = norm(c.title).slice(0, 10);
-  let list = [];
-  try {
-    const q = `artist:"${c.artist}" album:"${c.title}"`;
+  if (!fresh && cached && Date.now() - cached.at < 20 * 60 * 1000) return cached.list;   // Deezer preview links expire
+  const na = norm(c.artist).slice(0, 8), nt = norm(c.title);
+  const artistOk = name => norm(name || "").includes(na);
+  // whole title must match (a "(Remastered)"-style suffix is fine); "Part I" must not pick up "Part II"
+  const albumOk = t => {
+    const n = norm(t || "");
+    if (!n.startsWith(nt) || /\blive\b/i.test(t || "")) return false;
+    return !(/(^|[^a-z])i$/i.test(c.title.trim()) && /^i/.test(n.slice(nt.length)));
+  };
+  let list = [], source = "album";
+  const deezerAlbum = async q => {
     const data = await jsonp(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=50&output=jsonp`);
-    const seen = new Set();
-    list = (data.data || [])
-      .filter(x => norm(x.artist?.name || "").includes(na) && norm(x.album?.title || "").startsWith(nt) && !/live/i.test(x.album?.title || ""))
-      .sort((a, b) => b.rank - a.rank)
-      .filter(x => { const k = norm(x.title_short || x.title); if (seen.has(k)) return false; seen.add(k); return true; })
-      .map(x => ({ title: x.title_short || x.title, artist: x.artist.name, album: x.album.title, preview: x.preview }));
-  } catch (e) { console.warn("Deezer lookup failed", e); }
+    return rankedUnique((data.data || []).filter(x => artistOk(x.artist?.name) && albumOk(x.album?.title)).map(deezerTrack));
+  };
+  // Deezer's advanced artist:"" album:"" syntax returns nothing via JSONP (tested Sept 2026),
+  // so use a plain search and filter the results ourselves.
+  try { list = await deezerAlbum(`${c.artist} ${c.title}`); } catch (e) { console.warn("Deezer lookup failed", e); }
   if (!list.length) {
     try {
-      const url = `https://itunes.apple.com/search?media=music&entity=song&limit=25&term=${encodeURIComponent(c.artist + " " + c.title)}`;
+      const url = `https://itunes.apple.com/search?media=music&entity=song&limit=50&term=${encodeURIComponent(c.artist + " " + c.title)}`;
       let data;
       try { data = await (await fetch(url)).json(); } catch (_) { data = await jsonp(url); }
       list = (data.results || [])
-        .filter(x => x.previewUrl && norm(x.artistName || "").includes(na) && norm(x.collectionName || "").startsWith(nt) && !/live/i.test(x.collectionName || ""))
+        .filter(x => x.previewUrl && artistOk(x.artistName) && albumOk(x.collectionName))
         .map(x => ({ title: x.trackName, artist: x.artistName, album: x.collectionName, preview: x.previewUrl }));
     } catch (e) { console.warn("iTunes lookup failed", e); }
   }
+  if (!list.length) {
+    try {
+      const ar = await jsonp(`https://api.deezer.com/search/artist?q=${encodeURIComponent(c.artist)}&limit=10&output=jsonp`);
+      const artist = (ar.data || []).find(x => norm(x.name) === norm(c.artist)) || (ar.data || []).find(x => artistOk(x.name));
+      if (artist) {
+        const top = await jsonp(`https://api.deezer.com/artist/${artist.id}/top?limit=15&output=jsonp`);
+        list = rankedUnique((top.data || []).map(deezerTrack));
+        source = "artist";
+      }
+    } catch (e) { console.warn("Deezer artist lookup failed", e); }
+  }
+  list.source = source;
   hitsCache[c.id] = { at: Date.now(), list };
   return list;
 }
@@ -2263,14 +2520,19 @@ const music = {
     const my = ++this.token;
     const c = covers[face];
     this.now(`Finding the biggest songs on ${c.title}…`);
-    const hits = await albumHits(c);
+    let hits = [];
+    try { hits = await albumHits(c); } catch (e) { console.warn(e); }
     if (my !== this.token) return;
-    if (!hits.length) { this.now(`No tracks found for ${c.title}. Keeping the current song.`); return; }
+    if (!hits.length) {
+      console.warn("No preview found for", c.artist, "—", c.title);
+      this.now(`Couldn't find ${c.artist} on Deezer or iTunes. Keeping the current song.`);
+      return;
+    }
     this.face = face; this.hits = hits; this.idx = 0;
     this.playPreview(0, my);
   },
 
-  async playPreview(i, my = this.token) {
+  async playPreview(i, my = this.token, retried = false) {
     for (let n = 0; n < this.hits.length; n++) {
       const idx = (i + n) % this.hits.length;
       const h = this.hits[idx];
@@ -2288,8 +2550,15 @@ const music = {
       if (my !== this.token) return;
       this.idx = idx;
       this.setPlaying(true);
-      this.now(`(hit ${idx + 1} of ${this.hits.length}, preview)`, h);
+      this.now(this.hits.source === "artist"
+        ? `(album not on Deezer, playing the band's top songs: ${idx + 1} of ${this.hits.length})`
+        : `(hit ${idx + 1} of ${this.hits.length}, preview)`, h);
       return;
+    }
+    if (!retried && this.face !== null) {               // links probably expired: fetch fresh ones once
+      const fresh = await albumHits(covers[this.face], true).catch(() => []);
+      if (my !== this.token) return;
+      if (fresh.length) { this.hits = fresh; return this.playPreview(0, my, true); }
     }
     this.setPlaying(false);
     this.now("Previews for this album wouldn't play.");
@@ -2502,16 +2771,33 @@ if (!$("decadeSel").options.length) updateDecadeOptions();
 SIDE_BLOCKING = $("sideBlock").checked;
 showMusicSource();
 
-const restart = () => { saveSettings(); newGame(); };
-$("layoutSel").onchange = restart;
-$("sizeSel").onchange = () => { saveSettings(); boot(); };
+/* Game settings are staged: changing one doesn't deal a new board until Start is pressed. */
+let pendingStart = false;
+function markPending() {
+  pendingStart = true;
+  saveSettings();
+  $("btnStart").classList.add("pending");
+  $("btnStart").textContent = "▶ Start with these settings";
+  status("Settings changed. Press Start to deal a new board.");
+}
+function startGame() {
+  pendingStart = false;
+  $("btnStart").classList.remove("pending");
+  $("btnStart").textContent = "▶ Start game";
+  SIDE_BLOCKING = $("sideBlock").checked;        // rule changes only take effect on a new deal
+  boot();                                        // reloads the album pool if category/decade/size changed (cached otherwise)
+}
+$("btnStart").onclick = startGame;
+$("layoutSel").onchange = markPending;
+$("sizeSel").onchange = markPending;
 $("genreSel").onchange = () => {
-  updateDecadeOptions();                           // keeps "All decades" if the old decade has nothing
-  const prev = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}").decade;
-  if (prev && catalogFor($("genreSel").value, prev).length) $("decadeSel").value = prev;
-  saveSettings(); boot();
+  let prev = null;
+  try { prev = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}").decade; } catch (_) {}
+  updateDecadeOptions();                           // falls back to "All decades" if the old decade has nothing
+  if (prev && prev !== "all" && catalogFor($("genreSel").value, prev).length) $("decadeSel").value = prev;
+  markPending();
 };
-$("decadeSel").onchange = () => { saveSettings(); boot(); };
+$("decadeSel").onchange = markPending;
 /* Phone: every option lives in a menu under the ☰ button, so the tray and board get the screen. */
 function setMenuOpen(open) {
   $("menuPanel").classList.toggle("open", open);
@@ -2526,19 +2812,19 @@ if (isPhone()) {
   document.addEventListener("pointerdown", e => {
     if (!e.target.closest("#menuPanel, #menuBtn")) setMenuOpen(false);
   }, { capture: true });
-  ["btnNew", "btnHint", "btnShuffle", "btnUndo"].forEach(id => $(id).addEventListener("click", () => setMenuOpen(false)));
+  ["btnNew", "btnHint", "btnShuffle", "btnUndo", "btnStart"].forEach(id => $(id).addEventListener("click", () => setMenuOpen(false)));
 }
 let resizeTimer = null;
 addEventListener("resize", () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => { applyWide(); autoFit(); }, 120);
 });
-$("copiesSel").onchange = restart;
-$("diffSel").onchange = restart;
-$("sideBlock").onchange = () => { SIDE_BLOCKING = $("sideBlock").checked; restart(); };
+$("copiesSel").onchange = markPending;
+$("diffSel").onchange = markPending;
+$("sideBlock").onchange = markPending;
 $("autoPick").onchange = () => { saveSettings(); resetAuto(); };
-$("btnNew").onclick = newGame;
-$("btnOverlayNew").onclick = newGame;
+$("btnNew").onclick = () => (pendingStart ? startGame() : newGame());
+$("btnOverlayNew").onclick = () => (pendingStart ? startGame() : newGame());
 $("btnOverlayUndo").onclick = undo;
 $("btnHint").onclick = hint;
 $("btnShuffle").onclick = reshuffle;
