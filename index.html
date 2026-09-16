@@ -1,0 +1,1581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Metal Mahjong</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Metal+Mania&family=Barlow+Condensed:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --iron: #25282c; --iron-deep: #17191c;
+  --bone: #e6dcc3; --bone-edge: #b3a27c; --bone-dark: #8c7d5c;
+  --brass: #b08d57; --blood: #8e1c1c; --ash: #9a9ca0;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; display: flex; flex-direction: column;
+  color: var(--bone); font-family: "Barlow Condensed", "Arial Narrow", sans-serif; font-size: 18px;
+  background:
+    repeating-linear-gradient(90deg, rgba(255,255,255,.015) 0 1px, transparent 1px 3px),
+    radial-gradient(ellipse at 50% 30%, var(--iron) 0%, var(--iron-deep) 75%);
+  background-attachment: fixed;
+}
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; padding: 14px 20px 6px; }
+h1 {
+  margin: 0; font-family: "Metal Mania", Georgia, serif; font-weight: 400; font-size: 44px; line-height: 1;
+  text-shadow: 0 2px 0 #000, 0 0 18px rgba(142,28,28,.55);
+}
+.stats { color: var(--brass); display: flex; gap: 16px; }
+.controls { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; align-items: center; }
+button, select {
+  font: inherit; font-weight: 600; font-size: 16px; color: var(--bone);
+  background: #33373c; border: 1px solid #4a4f55; border-bottom-color: #111;
+  padding: 6px 12px; border-radius: 3px; cursor: pointer;
+}
+button:hover, select:hover { background: #3d4248; }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+button:disabled { opacity: .45; cursor: default; }
+.zoom { display: flex; gap: 2px; }
+.toggle { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 16px; padding: 0 4px; cursor: pointer; }
+.hint { font-size: 14px; color: var(--ash); overflow-wrap: anywhere; }
+.hint code { color: var(--bone); }
+#spClientId { flex: 1; min-width: 0; font: inherit; font-size: 15px; color: var(--bone); background: #1c1e21; border: 1px solid #4a4f55; padding: 6px; }
+.toggle.small { font-size: 15px; font-weight: 400; padding: 0; }
+.toggle input { accent-color: var(--blood); width: 16px; height: 16px; }
+.zoom button { padding: 6px 10px; }
+.trayRow { display: grid; grid-template-columns: minmax(200px, 1fr) auto minmax(260px, 1fr); gap: 16px; align-items: center; padding: 6px 20px 12px; }
+.last { display: flex; align-items: center; gap: 12px; }
+.coverBtn { padding: 0; border: 1px solid #3a3e44; background: #1c1e21; width: 64px; height: 64px; flex: none; }
+.coverBtn:disabled { opacity: 1; cursor: default; }
+#lastCover { width: 100%; height: 100%; object-fit: cover; display: block; }
+#lastCover:not([src]) { visibility: hidden; }
+#lastInfo .artist { font-weight: 600; }
+#lastInfo .album, #status { color: var(--ash); }
+.trayWrap { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+#status { text-align: center; min-height: 1.3em; max-width: 60ch; }
+#tray {
+  display: grid; grid-template-columns: repeat(4, 96px); gap: 8px; padding: 10px 14px;
+  background: linear-gradient(#2c2f34, #1a1c1f);
+  border: 2px solid var(--brass); border-radius: 6px;
+  box-shadow: inset 0 3px 8px rgba(0,0,0,.7), 0 3px 0 #000;
+  position: relative;
+}
+#tray::before, #tray::after {
+  content: ""; position: absolute; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%;
+  background: var(--brass); box-shadow: 0 1px 0 #000;
+}
+#tray::before { left: 4px; } #tray::after { right: 4px; }
+.trayBox { display: flex; flex-direction: column; gap: 5px; }
+.autoTrack[hidden] { display: none; }
+.autoTrack { height: 5px; border-radius: 3px; background: #121315; overflow: hidden; }
+#autoBar { height: 100%; background: var(--brass); transform-origin: left; transform: scaleX(0); }
+#autoBar.run { animation: drain var(--auto-dur, 30s) linear forwards; }
+@keyframes drain {
+  0% { transform: scaleX(1); background: var(--brass); }
+  83% { background: var(--brass); }
+  100% { transform: scaleX(0); background: var(--blood); }
+}
+@media (prefers-reduced-motion: reduce) { #autoBar.run { animation-name: drainStep; } @keyframes drainStep { 0%,99% { transform: scaleX(1); } 100% { transform: scaleX(0); } } }
+.slot { width: 96px; height: 96px; border-radius: 4px; background: #121315; box-shadow: inset 0 2px 6px #000; overflow: hidden; }
+.slot img { width: 100%; height: 100%; object-fit: cover; display: block; animation: drop .18s ease-out; }
+#tray.danger { border-color: var(--blood); box-shadow: inset 0 3px 8px rgba(0,0,0,.7), 0 0 14px rgba(142,28,28,.8); }
+@keyframes drop { from { transform: translateY(-14px) scale(1.08); opacity: .4; } }
+.music { justify-self: end; display: flex; flex-direction: column; gap: 6px; width: min(320px, 100%); }
+.musControls { display: flex; gap: 6px; align-items: center; }
+#musVol { flex: 1; accent-color: var(--brass); }
+#musNow { color: var(--ash); font-size: 16px; line-height: 1.25; min-height: 2.5em; }
+#musNow b { color: var(--bone); font-weight: 600; }
+#spotifyUrl { flex: 1; min-width: 0; font: inherit; font-size: 15px; color: var(--bone); background: #1c1e21; border: 1px solid #4a4f55; padding: 6px; }
+#spotifyFrame iframe { border: 0; border-radius: 8px; width: 100%; height: 152px; display: block; }
+@media (max-width: 1100px) {
+  .trayRow { grid-template-columns: 1fr; justify-items: center; }
+  .music { justify-self: center; }
+}
+@media (max-width: 480px) {
+  #tray { grid-template-columns: repeat(4, 68px); }
+  .slot { width: 68px; height: 68px; }
+}
+#boardWrap { flex: 1; overflow: auto; padding: 0 12px 24px; }
+#sizer { position: relative; margin: 0 auto; }
+#board { position: absolute; top: 0; left: 0; transform-origin: top left; }
+.tile {
+  position: absolute; width: 116px; height: 116px; padding: 5px;
+  background: linear-gradient(145deg, #f1e9d6, var(--bone) 60%);
+  border-radius: 8px; border: 1px solid var(--bone-edge);
+  box-shadow: 5px 6px 0 var(--bone-edge), 6px 7px 0 var(--bone-dark), 8px 12px 12px rgba(0,0,0,.55);
+  cursor: pointer; transition: transform .08s, filter .15s;
+}
+.tile img { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: 3px; pointer-events: none; background: #222; }
+.tile.blocked { cursor: default; }
+.tile.covered { filter: brightness(.38) saturate(.25); }
+.tile.sided { filter: brightness(.6) saturate(.45); }
+.tile.free { box-shadow: 5px 6px 0 var(--bone-edge), 6px 7px 0 var(--bone-dark), 0 0 0 2px rgba(230,220,195,.55), 8px 12px 14px rgba(0,0,0,.6); }
+.tile.free:hover { transform: translate(-1px, -2px); }
+.tile { touch-action: none; user-select: none; -webkit-user-select: none; }
+.tile.dragging { opacity: .35; transition: none; cursor: grabbing; filter: none; }
+.tile.snap { transition: transform .2s ease-out, opacity .2s ease-out; }
+.tile.peek {
+  filter: none;
+  box-shadow: 5px 6px 0 var(--bone-edge), 0 0 0 4px var(--brass), 0 0 22px 4px rgba(176,141,87,.7), 8px 12px 14px rgba(0,0,0,.6);
+}
+.tile.gone {
+  background: #f3d9d0; transform: translate(-2px, -3px);
+  box-shadow: 5px 6px 0 var(--blood), 0 0 0 4px var(--blood), 8px 12px 14px rgba(0,0,0,.6);
+}
+.tile.hint { animation: pulse .7s ease-in-out 3; }
+@keyframes pulse { 50% { box-shadow: 5px 6px 0 var(--brass), 0 0 0 5px var(--brass); } }
+.tile:focus-visible { outline: 3px solid var(--brass); outline-offset: 2px; }
+#overlay { position: fixed; inset: 0; display: none; place-items: center; background: rgba(10,10,12,.78); z-index: 99999; }
+#overlay.show { display: grid; }
+#overlay div { text-align: center; }
+#overlay p { font-family: "Metal Mania", Georgia, serif; font-size: 60px; margin: 0 0 16px; }
+dialog { background: #2b2e33; color: var(--bone); border: 1px solid #4a4f55; border-radius: 4px; width: min(640px, 92vw); }
+dialog::backdrop { background: rgba(0,0,0,.6); }
+dialog h2 { margin: 0 0 6px; font-weight: 600; color: var(--brass); }
+dialog p { margin: 6px 0; color: var(--ash); max-width: 72ch; }
+dialog label { display: block; margin: 8px 0; }
+dialog input, dialog textarea { font: 14px/1.2 ui-monospace, Menlo, Consolas, monospace; color: var(--bone); background: #1c1e21; border: 1px solid #4a4f55; padding: 6px; width: 100%; }
+dialog input { font-family: inherit; font-size: 16px; }
+#importErr { color: #e07a6a; min-height: 1.2em; }
+.dlgButtons { display: flex; justify-content: flex-end; gap: 8px; }
+.credit { padding: 0 20px 12px; color: #6d7076; font-size: 14px; }
+.credit a { color: inherit; }
+@media (max-width: 700px) { h1 { font-size: 34px; } .controls { margin-left: 0; } }
+@media (prefers-reduced-motion: reduce) { .tile, .tile.hint { transition: none; animation: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Metal Mahjong</h1>
+  <div class="stats"><span id="layoutName"></span><span id="tilesLeft"></span></div>
+  <div class="controls">
+    <select id="layoutSel" aria-label="Layout"></select>
+    <select id="copiesSel" aria-label="Copies of each album">
+      <option value="2">Each album twice</option>
+      <option value="4">Each album 4 times</option>
+    </select>
+    <select id="diffSel" aria-label="Difficulty">
+      <option value=".25">Normal</option>
+      <option value=".6" selected>Hard</option>
+      <option value=".9">Brutal</option>
+    </select>
+    <label class="toggle"><input type="checkbox" id="sideBlock" checked> Side blocking</label>
+    <select id="autoPick" aria-label="Auto-pick" title="If you don't pick a tile in time, the best move is made for you">
+      <option value="0" selected>Auto-pick: off</option>
+      <option value="15">Auto-pick after 15s</option>
+      <option value="30">Auto-pick after 30s</option>
+      <option value="60">Auto-pick after 60s</option>
+    </select>
+    <button id="btnImport">Import layout</button>
+    <button id="btnNew">New game</button>
+    <button id="btnHint">Hint</button>
+    <button id="btnShuffle">Shuffle</button>
+    <button id="btnUndo">Undo</button>
+    <span class="zoom">
+      <button id="zoomOut" aria-label="Zoom out">−</button>
+      <button id="zoomFit">Fit</button>
+      <button id="zoomIn" aria-label="Zoom in">+</button>
+    </span>
+    <button id="btnReload" title="Re-query MusicBrainz for covers">Reload covers</button>
+  </div>
+</header>
+<div class="trayRow">
+  <div class="last">
+    <button id="lastBtn" class="coverBtn" title="Play a track from this album" disabled><img id="lastCover" alt=""></button>
+    <div id="lastInfo"><div class="album">Tap free tiles to move them into the tray.</div></div>
+  </div>
+  <div class="trayWrap">
+    <div class="trayBox">
+      <div id="tray" aria-label="Tray" role="list"></div>
+      <div class="autoTrack" id="autoTrack" title="Auto-pick timer" hidden><div id="autoBar"></div></div>
+    </div>
+    <div id="status" role="status">Loading covers…</div>
+  </div>
+  <div class="music">
+    <div class="musTop">
+      <select id="musSource" aria-label="Music source">
+        <option value="board">Album hits (Deezer previews)</option>
+        <option value="embed">Spotify playlist embed</option>
+      </select>
+    </div>
+    <div id="musPlayer">
+      <div class="musControls">
+        <button id="musPlay">Play</button>
+        <button id="musNext">Next hit</button>
+        <input id="musVol" type="range" min="0" max="1" step="0.05" value="0.5" aria-label="Volume">
+      </div>
+      <div id="musNow">Make a match to hear that album's biggest songs.</div>
+    </div>
+    <div id="musEmbed" hidden>
+      <div class="musControls">
+        <input id="spotifyUrl" placeholder="Paste a Spotify playlist link" aria-label="Spotify playlist link">
+        <button id="spotifyLoad">Load</button>
+      </div>
+      <div id="spotifyFrame"></div>
+    </div>
+  </div>
+</div>
+<div id="boardWrap"><div id="sizer"><div id="board"></div></div></div>
+<div class="credit">Turtle, Spider and Explosion layouts from <a href="https://github.com/KDE/kmahjongg">KMahjongg</a> (GPL-2.0-or-later). Covers from the Cover Art Archive via MusicBrainz.</div>
+<dialog id="importDlg">
+  <form method="dialog">
+    <h2>Import a KMahjongg layout</h2>
+    <p>Paste the contents of a <code>.layout</code> file, starting with <code>kmahjongg-layout-v1.1</code> or <code>v1.0</code>.</p>
+    <label>Name <input id="importName" required maxlength="40"></label>
+    <textarea id="importText" rows="14" spellcheck="false" required></textarea>
+    <p id="importErr" role="alert"></p>
+    <div class="dlgButtons"><button value="cancel" formnovalidate>Cancel</button><button id="importAdd" value="add">Add layout</button></div>
+  </form>
+</dialog>
+<div id="overlay"><div><p id="overlayText">Cleared</p><div class="dlgButtons" style="justify-content:center"><button id="btnOverlayUndo">Undo last move</button><button id="btnOverlayNew">New game</button></div></div></div>
+<script>
+
+/* ---------- Album pool ---------- */
+const ALBUMS = [
+  ["Black Sabbath","Black Sabbath"],["Black Sabbath","Paranoid"],["Black Sabbath","Master of Reality"],["Black Sabbath","Vol. 4"],
+  ["Black Sabbath","Sabbath Bloody Sabbath"],["Black Sabbath","Heaven and Hell"],
+  ["Iron Maiden","Iron Maiden"],["Iron Maiden","Killers"],["Iron Maiden","The Number of the Beast"],["Iron Maiden","Piece of Mind"],
+  ["Iron Maiden","Powerslave"],["Iron Maiden","Somewhere in Time"],["Iron Maiden","Seventh Son of a Seventh Son"],
+  ["Judas Priest","Sad Wings of Destiny"],["Judas Priest","Stained Class"],["Judas Priest","British Steel"],
+  ["Judas Priest","Screaming for Vengeance"],["Judas Priest","Defenders of the Faith"],["Judas Priest","Painkiller"],
+  ["Metallica","Kill 'Em All"],["Metallica","Ride the Lightning"],["Metallica","Master of Puppets"],["Metallica","...And Justice for All"],
+  ["Slayer","Show No Mercy"],["Slayer","Hell Awaits"],["Slayer","Reign in Blood"],["Slayer","South of Heaven"],["Slayer","Seasons in the Abyss"],
+  ["Megadeth","Killing Is My Business... and Business Is Good!"],["Megadeth","Peace Sells... but Who's Buying?"],
+  ["Megadeth","So Far, So Good... So What!"],["Megadeth","Rust in Peace"],
+  ["Anthrax","Spreading the Disease"],["Anthrax","Among the Living"],["Anthrax","Persistence of Time"],
+  ["Motörhead","Overkill"],["Motörhead","Bomber"],["Motörhead","Ace of Spades"],
+  ["Dio","Holy Diver"],["Dio","The Last in Line"],["Dio","Sacred Heart"],
+  ["Ozzy Osbourne","Blizzard of Ozz"],["Ozzy Osbourne","Diary of a Madman"],["Ozzy Osbourne","Bark at the Moon"],
+  ["Mercyful Fate","Melissa"],["Mercyful Fate","Don't Break the Oath"],["King Diamond","Abigail"],["King Diamond","Fatal Portrait"],
+  ["Venom","Welcome to Hell"],["Venom","Black Metal"],["Celtic Frost","To Mega Therion"],["Celtic Frost","Into the Pandemonium"],
+  ["Bathory","Under the Sign of the Black Mark"],["Bathory","Blood Fire Death"],["Bathory","Hammerheart"],
+  ["Death","Scream Bloody Gore"],["Death","Leprosy"],["Death","Spiritual Healing"],["Death","Human"],
+  ["Morbid Angel","Altars of Madness"],["Morbid Angel","Blessed Are the Sick"],
+  ["Testament","The Legacy"],["Testament","The New Order"],["Exodus","Bonded by Blood"],["Exodus","Fabulous Disaster"],
+  ["Kreator","Pleasure to Kill"],["Kreator","Extreme Aggression"],["Kreator","Coma of Souls"],
+  ["Sodom","Persecution Mania"],["Sodom","Agent Orange"],["Destruction","Infernal Overkill"],["Destruction","Eternal Devastation"],
+  ["Saxon","Wheels of Steel"],["Saxon","Strong Arm of the Law"],["Saxon","Denim and Leather"],
+  ["Accept","Restless and Wild"],["Accept","Balls to the Wall"],
+  ["Queensrÿche","The Warning"],["Queensrÿche","Rage for Order"],["Queensrÿche","Operation: Mindcrime"],
+  ["Helloween","Walls of Jericho"],["Helloween","Keeper of the Seven Keys, Part I"],["Helloween","Keeper of the Seven Keys, Part II"],
+  ["Candlemass","Epicus Doomicus Metallicus"],["Candlemass","Nightfall"],
+  ["Rainbow","Rising"],["Rainbow","Long Live Rock 'n' Roll"],["Scorpions","Lovedrive"],["Scorpions","Blackout"],
+  ["W.A.S.P.","W.A.S.P."],["W.A.S.P.","The Last Command"],
+  ["Manowar","Hail to England"],["Manowar","Sign of the Hammer"],["Manowar","Kings of Metal"],
+  ["Pantera","Cowboys From Hell"],["Pantera","Vulgar Display of Power"],
+  ["Sepultura","Schizophrenia"],["Sepultura","Beneath the Remains"],["Sepultura","Arise"],
+  ["Diamond Head","Lightning to the Nations"],["Angel Witch","Angel Witch"],["Tank","Filth Hounds of Hades"],
+  ["Raven","Wiped Out"],["Satan","Court in the Act"],["Grim Reaper","See You in Hell"],
+  ["Possessed","Seven Churches"],["Dark Angel","Darkness Descends"],["Overkill","Taking Over"],
+  ["Savatage","Hall of the Mountain King"],["Voivod","Killing Technology"],["Voivod","Dimension Hatröss"],["Voivod","Nothingface"],
+  ["Obituary","Slowly We Rot"],["Obituary","Cause of Death"],["Carcass","Symphonies of Sickness"],["Carcass","Heartwork"],
+  ["Napalm Death","Scum"],["Autopsy","Mental Funeral"],["Deicide","Deicide"],
+  ["Cannibal Corpse","Eaten Back to Life"],["Cannibal Corpse","Tomb of the Mutilated"],
+  ["Entombed","Left Hand Path"],["Dismember","Like an Ever Flowing Stream"],["Suffocation","Effigy of the Forgotten"],
+  ["Atheist","Unquestionable Presence"],["Coroner","No More Color"],
+  ["Mayhem","De Mysteriis Dom Sathanas"],["Darkthrone","A Blaze in the Northern Sky"],["Darkthrone","Transilvanian Hunger"],
+  ["Emperor","In the Nightside Eclipse"],["Immortal","Pure Holocaust"],["Burzum","Hvis lyset tar oss"],
+  ["Saint Vitus","Born Too Late"],["Trouble","Psalm 9"],["Pentagram","Relentless"],
+  ["Cirith Ungol","King of the Dead"],["Manilla Road","Crystal Logic"],["Fates Warning","Awaken the Guardian"],
+  ["Metal Church","Metal Church"],["Riot","Thundersteel"],["Armored Saint","Symbol of Salvation"],["Omen","Battle Cry"],
+  ["Nuclear Assault","Game Over"],["Sacrifice","Forward to Termination"],["Razor","Evil Invaders"],
+  ["Annihilator","Alice in Hell"],["Forbidden","Twisted Into Form"],["Vio-lence","Eternal Nightmare"],
+  ["Death Angel","The Ultra-Violence"],["Sacred Reich","Ignorance"],
+  ["Paradise Lost","Gothic"],["My Dying Bride","Turn Loose the Swans"],["Budgie","Never Turn Your Back on a Friend"]
+];
+const FACES_NEEDED = 72;  // enough for every tile pair on a 144-tile board to be a different album
+const CACHE_KEY = "metal-mahjong-covers-v2";
+const MB = "https://musicbrainz.org/ws/2/release-group/";
+const coverUrl = (id, size = 250) => `https://coverartarchive.org/release-group/${id}/front-${size}`;
+
+const $ = id => document.getElementById(id);
+const status = msg => { $("status").textContent = msg; };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const norm = s => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const esc = s => s.replace(/[\\"]/g, m => "\\" + m);
+
+let lastMbCall = 0;
+async function mbFetch(query, limit = 100) {
+  const wait = 1100 - (Date.now() - lastMbCall);       // MusicBrainz: max 1 req/sec
+  if (wait > 0) await sleep(wait);
+  lastMbCall = Date.now();
+  const url = `${MB}?query=${encodeURIComponent(query)}&fmt=json&limit=${limit}`;
+  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`MusicBrainz returned ${res.status}`);
+  return (await res.json())["release-groups"] || [];
+}
+
+const creditName = rg => (rg["artist-credit"] || []).map(c => c.name + (c.joinphrase || "")).join("");
+const toEntry = rg => ({ id: rg.id, artist: creditName(rg), title: rg.title, year: (rg["first-release-date"] || "").slice(0, 4) });
+const isStudioAlbum = rg => rg["primary-type"] === "Album" && !(rg["secondary-types"] || []).length;
+
+async function resolveCurated() {
+  const found = [];
+  const BATCH = 15;
+  for (let i = 0; i < ALBUMS.length; i += BATCH) {
+    const batch = ALBUMS.slice(i, i + BATCH);
+    status(`Querying MusicBrainz… ${Math.min(i + BATCH, ALBUMS.length)}/${ALBUMS.length} albums`);
+    const q = batch.map(([a, t]) => `(artist:"${esc(a)}" AND releasegroup:"${esc(t)}")`).join(" OR ");
+    let results;
+    try { results = await mbFetch(`(${q}) AND primarytype:album`); }
+    catch (e) { console.warn(e); continue; }
+    for (const [a, t] of batch) {
+      const nt = norm(t), na = norm(a);
+      const hit = results
+        .filter(rg => {
+          const rt = norm(rg.title);
+          const titleOk = rt === nt || (nt.length >= 8 && rt.startsWith(nt) && rt.length - nt.length <= 4);
+          return isStudioAlbum(rg) && titleOk && norm(creditName(rg)).includes(na);
+        })
+        .sort((x, y) => (y.score || 0) - (x.score || 0))[0];
+      if (hit) found.push(toEntry(hit));
+    }
+  }
+  return found;
+}
+
+async function resolveByTag(exclude, need) {
+  const tags = ["heavy metal", "thrash metal", "death metal", "black metal", "doom metal", "speed metal", "nwobhm", "power metal"];
+  const out = [];
+  for (const tag of tags) {
+    if (out.length >= need * 2) break;
+    status(`Filling gaps from MusicBrainz tag "${tag}"…`);
+    try {
+      const rgs = await mbFetch(`tag:"${tag}" AND primarytype:album AND firstreleasedate:[1970 TO 1995]`);
+      for (const rg of rgs) {
+        if (!isStudioAlbum(rg) || exclude.has(rg.id)) continue;
+        exclude.add(rg.id);
+        out.push(toEntry(rg));
+      }
+    } catch (e) { console.warn(e); }
+  }
+  return out;
+}
+
+function probeImage(src, timeout = 10000) {
+  return new Promise(resolve => {
+    const img = new Image();
+    const t = setTimeout(() => { img.src = ""; resolve(false); }, timeout);
+    img.onload = () => { clearTimeout(t); resolve(true); };
+    img.onerror = () => { clearTimeout(t); resolve(false); };
+    img.src = src;
+  });
+}
+
+async function keepWithCovers(entries, need) {
+  const ok = [];
+  for (let i = 0; i < entries.length && ok.length < need; i += 12) {
+    const chunk = entries.slice(i, i + 12);
+    status(`Checking Cover Art Archive… ${ok.length}/${need} covers`);
+    const flags = await Promise.all(chunk.map(e => probeImage(coverUrl(e.id))));
+    chunk.forEach((e, j) => { if (flags[j] && ok.length < need) ok.push(e); });
+  }
+  return ok;
+}
+
+async function loadCovers(force = false) {
+  if (!force) {
+    try {
+      const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
+      if (Array.isArray(cached) && cached.length) return cached;
+    } catch (_) {}
+  }
+  let pool = await keepWithCovers(await resolveCurated(), FACES_NEEDED);
+  if (pool.length < FACES_NEEDED) {
+    const extra = shuffleArr(await resolveByTag(new Set(pool.map(p => p.id)), FACES_NEEDED - pool.length));
+    pool = pool.concat(await keepWithCovers(extra, FACES_NEEDED - pool.length));
+  }
+  if (pool.length) { try { localStorage.setItem(CACHE_KEY, JSON.stringify(pool)); } catch (_) {} }
+  return pool;
+}
+
+/* ---------- Layouts ----------
+   Coordinates are half-tile units: a tile at (x,y,z) covers x..x+2, y..y+2 on level z.
+   Tiles may sit half a tile apart in either direction on the same level (staggered rows
+   and columns), and upper-level tiles may straddle 2 or 4 tiles below. */
+const rnd = n => Math.floor(Math.random() * n);
+const shuffleArr = a => { for (let i = a.length - 1; i > 0; i--) { const j = rnd(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+
+/* KMahjongg .layout format (v1.0 / v1.1). Each character is a quarter of a tile;
+   '1' marks a tile's top-left corner, '2','4','3' fill the other corners. */
+function parseKmahjongg(text) {
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith("#"));
+  if (!/^kmahjongg-layout-v1\.[01]$/.test(lines[0] || "")) throw new Error("First line must be kmahjongg-layout-v1.0 or v1.1");
+  let h = 16;
+  const rows = [];
+  for (const l of lines.slice(1)) {
+    let m;
+    if ((m = /^h(\d+)$/.exec(l))) h = +m[1];
+    else if (/^[wd]\d+$/.test(l)) continue;
+    else if (/^[.1234]+$/.test(l)) rows.push(l);
+  }
+  if (!rows.length || rows.length % h) throw new Error(`Expected levels of ${h} rows, got ${rows.length} rows`);
+  const t = [];
+  rows.forEach((row, i) => {
+    for (let x = 0; x < row.length; x++) if (row[x] === "1") t.push({ x, y: i % h, z: Math.floor(i / h) });
+  });
+  if (!t.length) throw new Error("No tiles found");
+  return t;
+}
+
+/* Compact authoring format: one char per tile, '#' = tile. A row starting with '>'
+   is shifted right by half a tile. Each level has its own dx/dy (half units). */
+function fromRows(levels) {
+  const t = [];
+  levels.forEach((L, z) => {
+    L.rows.forEach((r, ri) => {
+      let sx = 0;
+      if (r[0] === ">") { sx = 1; r = r.slice(1); }
+      [...r].forEach((ch, ci) => { if (ch === "#") t.push({ x: (L.dx || 0) + sx + 2 * ci, y: (L.dy || 0) + 2 * ri, z }); });
+    });
+  });
+  return t;
+}
+
+const overlap = (a, b) => Math.max(0, 2 - Math.abs(a.x - b.x)) * Math.max(0, 2 - Math.abs(a.y - b.y));
+const support = (p, list) => list.reduce((s, q) => s + (q.z === p.z - 1 ? overlap(p, q) : 0), 0);
+
+/* Remove tiles that aren't fully resting on the level below (repeat until stable). */
+function dropUnsupported(list) {
+  let t = list.slice(), changed = true;
+  while (changed) {
+    const keep = t.filter(p => p.z === 0 || support(p, t) === 4);
+    changed = keep.length !== t.length;
+    t = keep;
+  }
+  return t;
+}
+
+const KMJ_TURTLE = `kmahjongg-layout-v1.1
+w32
+h16
+d5
+...121212121212121212121212.....
+...434343434343434343434343.....
+.......1212121212121212.........
+.......4343434343434343.........
+.....12121212121212121212.......
+.....43434343434343434343.......
+...121212121212121212121212.....
+.124343434343434343434343431212.
+.431212121212121212121212124343.
+...434343434343434343434343.....
+.....12121212121212121212.......
+.....43434343434343434343.......
+.......1212121212121212.........
+.......4343434343434343.........
+...121212121212121212121212.....
+...434343434343434343434343.....
+................................
+................................
+.........121212121212...........
+.........434343434343...........
+.........121212121212...........
+.........434343434343...........
+.........121212121212...........
+.........434343434343...........
+.........121212121212...........
+.........434343434343...........
+.........121212121212...........
+.........434343434343...........
+.........121212121212...........
+.........434343434343...........
+................................
+................................
+................................
+................................
+................................
+................................
+...........12121212.............
+...........43434343.............
+...........12121212.............
+...........43434343.............
+...........12121212.............
+...........43434343.............
+...........12121212.............
+...........43434343.............
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+.............1212...............
+.............4343...............
+.............1212...............
+.............4343...............
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+..............12................
+..............43................
+................................
+................................
+................................
+................................
+................................
+................................
+................................`;
+
+const KMJ_SPIDER = `kmahjongg-layout-v1.1
+w32
+h16
+d4
+......1212...12..12...1212......
+......4343...43..43...4343......
+........12....1212....12........
+..12....4312..4343..1243....12..
+..4312....431212121243....1243..
+....431212..43434343..121243....
+......43431212121212124343......
+..........434343434343..........
+.........12121212121212.........
+.121212124343434343434312121212.
+.43434343.121212121212.43434343.
+..........434343434343..........
+........12..12121212..12........
+......1243..43434343..4312......
+..121243......1212......431212..
+..4343........4343........4343..
+......1212...12..12...1212......
+......4343...43..43...4343......
+........12............12........
+..12....4312........1243....12..
+..4312....43..1212..43....1243..
+....431212....4343....121243....
+......4343..12121212..4343......
+............43434343............
+...........1212121212...........
+.12121212..4343434343..12121212.
+.43434343...12121212...43434343.
+............43434343............
+........12....1212....12........
+......1243....4343....4312......
+..121243......1212......431212..
+..4343........4343........4343..
+........12............12........
+........43............43........
+................................
+..12......12........12......12..
+..43......43........43......43..
+......12................12......
+......43......1212......43......
+..............4343..............
+.............121212.............
+.12..12......434343......12..12.
+.43..43.......1212.......43..43.
+..............4343..............
+..............1212..............
+......12......4343......12......
+..12..43................43..12..
+..43........................43..
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+...............12...............
+...............43...............
+................................
+................................
+................................
+................................
+................................`;
+
+const KMJ_EXPLOSION = `kmahjongg-layout-v1.0
+...12...12...121212...12...12...
+.124312.43...434343...43.124312.
+.431243.12..12121212..12.431243.
+.124312.43..43434343..43.124312.
+.431243....1212121212....431243.
+...43....12434343434312....43...
+.......124312......124312.......
+121212.431243..12..431243.121212
+434343.124312..43..124312.434343
+.......431243......431243.......
+...12....43121212121243....12...
+.124312....4343434343....124312.
+.431243.12..12121212..12.431243.
+.124312.43..43434343..43.124312.
+.431243.12...121212...12.431243.
+...43...43...434343...43...43...
+...............12...............
+...12...12.....43.....12...12...
+.124312.43...121212...43.124312.
+.431243......434343......431243.
+...43..........12..........43...
+...............43...............
+.........12..........12.........
+.1212..124312..12..124312..1212.
+.4343..431243..43..431243..4343.
+.........43..........43.........
+...............12...............
+...12..........43..........12...
+.124312......121212......124312.
+.431243.12...434343...12.431243.
+...43...43.....12.....43...43...
+...............43...............
+................................
+................................
+...12..........12..........12...
+...43..........43..........43...
+................................
+................................
+................................
+..12.....12..........12.....12..
+..43.....43..........43.....43..
+................................
+................................
+................................
+...12..........12..........12...
+...43..........43..........43...
+................................
+................................
+................................
+................................
+...12......................12...
+...43......................43...
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+...12......................12...
+...43......................43...
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+................................
+................................`;
+
+function generatedLayout() {
+  const C = 12; // board centre in half units
+  const extent = list => Math.max(...list.map(p => Math.abs(p.x + 1 - C)));
+  for (let tries = 0; tries < 400; tries++) {
+    const L0 = [], R = 6 + rnd(3), starts = [];
+    let n = 7 + rnd(5);
+    for (let r = 0; r < R; r++) {
+      // mostly even steps keep rows aligned; an occasional odd step staggers a row by half a tile
+      if (r) n += Math.random() < .3 ? (rnd(2) ? 1 : -1) : (rnd(3) - 1) * 2;
+      n = Math.max(4, Math.min(12, n));
+      const start = C - n;
+      starts.push(start);
+      const holes = new Set();
+      if (r > 0 && r < R - 1 && n >= 6 && Math.random() < .4) {
+        const k = 1 + rnd(Math.floor(n / 2) - 1);
+        holes.add(k); holes.add(n - 1 - k);
+      }
+      for (let k = 0; k < n; k++) if (!holes.has(k)) L0.push({ x: start + 2 * k, y: 2 * r, z: 0 });
+    }
+    if (Math.random() < .6) {                  // turtle-style wing tiles between two rows
+      const r = 1 + rnd(R - 3);
+      let X = Math.min(starts[r], starts[r + 1]) - 2;
+      for (let i = 0, len = 1 + rnd(2); i < len; i++, X -= 2) {
+        L0.push({ x: X, y: 2 * r + 1, z: 0 }, { x: 2 * C - 2 - X, y: 2 * r + 1, z: 0 });
+      }
+    }
+    const t = L0.slice();
+    let lower = L0;
+    const levels = 3 + rnd(3);
+    for (let z = 1; z < levels; z++) {
+      const ys = lower.map(p => p.y);
+      const minY = Math.min(...ys) + rnd(2), maxY = Math.max(...ys) - rnd(2);
+      const limit = extent(lower) - 1 - rnd(3);  // each level pulls in from the one below
+      const layer = [];
+      for (let Y = minY; Y <= maxY; Y += 2) {
+        const cands = [];
+        for (let X = C - 1 - limit; X <= C - 1 + limit; X++) {
+          const p = { x: X, y: Y, z };
+          if (lower.reduce((s, q) => s + overlap(p, q), 0) === 4) cands.push(X);
+        }
+        cands.sort((a, b) => Math.abs(a + 1 - C) - Math.abs(b + 1 - C));
+        const chosen = [], free = v => chosen.every(c => Math.abs(c - v) >= 2);
+        for (const X of cands) {
+          const M = 2 * C - 2 - X;
+          if (!cands.includes(M)) continue;
+          if (X === M) { if (free(X)) chosen.push(X); }
+          else if (free(X) && free(M) && Math.abs(X - M) >= 2) chosen.push(X, M);
+        }
+        chosen.forEach(X => layer.push({ x: X, y: Y, z }));
+      }
+      if (layer.length < 2) break;
+      t.push(...layer);
+      lower = layer;
+    }
+    const levelsUsed = Math.max(...t.map(p => p.z)) + 1;
+    if (t.length >= 84 && t.length <= 144 && levelsUsed >= 3) return t;
+  }
+  return parseKmahjongg(KMJ_TURTLE);
+}
+
+/* Random stacked board modelled on current mobile Mahjong games: a dense base
+   grid (some columns dropped half a tile), then 2-3 levels whose tiles are mostly
+   placed half a tile off the tiles below, so they straddle two or four of them. */
+function randomStackLayout() {
+  const wrap = typeof document !== "undefined" && document.getElementById("boardWrap");
+  const portrait = wrap ? wrap.clientHeight > wrap.clientWidth : false;
+  for (let tries = 0; tries < 300; tries++) {
+    const W = portrait ? 6 + rnd(2) : 9 + rnd(3);
+    const H = portrait ? 7 + rnd(3) : 5 + rnd(2);
+    const sym = Math.random() < .65;
+    const mirrorX = X => 2 * W - 2 - X;
+    const colShift = [];
+    for (let c = 0; c < W; c++) colShift[c] = sym && c >= W - 1 - c ? colShift[W - 1 - c] : (Math.random() < .22 ? 1 : 0);
+    const base = [];
+    const holeP = .06 + Math.random() * .12;
+    for (let c = 0; c < W; c++) for (let r = 0; r < H; r++) {
+      const src = sym && c > W - 1 - c ? W - 1 - c : c;
+      const key = `${src},${r}`;
+      base.holes ||= {};
+      if (!(key in base.holes)) base.holes[key] = Math.random() < holeP;
+      if (!base.holes[key]) base.push({ x: 2 * c, y: 2 * r + colShift[c], z: 0 });
+    }
+    delete base.holes;
+    const t = base.slice();
+    let lower = base;
+    const levels = 1 + 2 + rnd(2);
+    for (let z = 1; z < levels; z++) {
+      const cands = [];
+      const minY = Math.min(...base.map(p => p.y)), maxY = Math.max(...base.map(p => p.y));
+      for (let X = 0; X <= 2 * W - 2; X++) for (let Y = minY; Y <= maxY; Y++) {
+        const p = { x: X, y: Y, z };
+        const cov = lower.reduce((s, q) => s + overlap(p, q), 0);
+        if (cov < 2) continue;                 // must rest at least half on the level below
+        const halfOff = lower.some(q => overlap(p, q) === 2 || overlap(p, q) === 1);
+        // prefer the half-offset spots, then fully-supported ones
+        cands.push({ X, Y, w: Math.random() + (halfOff ? .9 : 0) + (cov === 4 ? .3 : 0) });
+      }
+      cands.sort((a, b) => b.w - a.w);
+      const layer = [];
+      const target = Math.floor(lower.length * (.6 + Math.random() * .25));
+      const clash = (X, Y) => layer.some(q => Math.abs(q.x - X) < 2 && Math.abs(q.y - Y) < 2);
+      for (const { X, Y } of cands) {
+        if (layer.length >= target) break;
+        if (clash(X, Y)) continue;
+        if (sym) {
+          const M = mirrorX(X);
+          if (M !== X && (Math.abs(M - X) < 2 || clash(M, Y) || !cands.some(c => c.X === M && c.Y === Y))) continue;
+          layer.push({ x: X, y: Y, z });
+          if (M !== X) layer.push({ x: M, y: Y, z });
+        } else layer.push({ x: X, y: Y, z });
+      }
+      if (layer.length < 2) break;
+      t.push(...layer);
+      lower = layer;
+    }
+    if (t.length >= 96 && t.length <= 144) return t;
+  }
+  return generatedLayout();
+}
+
+const LAYOUTS = {
+  "Random stack": randomStackLayout,
+  "Turtle": () => parseKmahjongg(KMJ_TURTLE),
+  "Spider": () => parseKmahjongg(KMJ_SPIDER),
+  "Explosion": () => parseKmahjongg(KMJ_EXPLOSION),
+  "Skull": () => dropUnsupported(fromRows([
+    { rows: [
+      "...#######...",
+      "..#########..",
+      ".###########.",
+      ".##..###..##.",
+      ".##..###..##.",
+      ".###########.",
+      "..####.####..",
+      "...#######...",
+      "...#.#.#.#...",
+    ] },
+    { dx: 1, dy: 1, rows: [
+      "...######",
+      "..########",
+      ".#........#",
+      "...........",
+      ".##......##",
+      "..###.###",
+      "...#####",
+    ] },
+    { dx: 2, dy: 2, rows: ["...####", "..######"] },
+    { dx: 3, dy: 3, rows: ["...###"] },
+  ])),
+  "Lightning Bolt": () => dropUnsupported(fromRows([
+    { rows: [
+      "........#####",
+      ">......#####",
+      ".......#####",
+      ">.....#####",
+      "....##########",
+      ">........#####",
+      "........#####",
+      ">......#####",
+      "......#####",
+      ">....####",
+      ".....###",
+      ">...##",
+    ] },
+    { rows: [
+      ".........###",
+      ">.......###",
+      "........###",
+      ">......###",
+      ".....########",
+      ">.........###",
+      ".........###",
+      ">.......###",
+      ".......###",
+    ] },
+    { rows: [
+      "..........#",
+      ">........#",
+      ".........#",
+      ">.......#",
+      "......######",
+      ">..........#",
+    ] },
+  ])),
+  "Amp Stack": () => dropUnsupported(fromRows([
+    { rows: [
+      "##############",
+      "##..##..##..##",
+      "##..##..##..##",
+      "##############",
+      "##############",
+      "##..##..##..##",
+      "##..##..##..##",
+      "##############",
+    ] },
+    { dx: 1, dy: 1, rows: Array(7).fill("#############") },
+    { dx: 2, dy: 6, rows: ["############"] },
+  ])),
+  "Generated": generatedLayout,
+};
+const BUILTIN_KMJ = new Set(["Turtle", "Spider", "Explosion"]);
+
+function finalizeLayout(list, allowFlip) {
+  let t = list.map(p => ({ ...p }));
+  if (t.length % 2) {                          // drop one tile nothing rests on
+    const onTop = t.filter(p => !t.some(q => q.z === p.z + 1 && overlap(p, q)));
+    const victim = onTop.sort((a, b) => b.z - a.z)[0];
+    t.splice(t.indexOf(victim), 1);
+  }
+  if (allowFlip) {
+    const maxX = Math.max(...t.map(p => p.x)), maxY = Math.max(...t.map(p => p.y));
+    if (Math.random() < .5) t.forEach(p => p.x = maxX - p.x);
+    if (Math.random() < .5) t.forEach(p => p.y = maxY - p.y);
+  }
+  const minX = Math.min(...t.map(p => p.x)), minY = Math.min(...t.map(p => p.y));
+  t.forEach(p => { p.x -= minX; p.y -= minY; });
+  return t;
+}
+
+/* Neighbour lists. A tile is covered by any tile one level up that overlaps it at all,
+   and blocked on a side by any same-level tile directly beside it, including ones
+   staggered half a tile up or down. */
+function buildGeom(list) {
+  const g = list.map((p, i) => ({ ...p, id: i, above: [], left: [], right: [] }));
+  for (const a of g) for (const b of g) {
+    if (a === b) continue;
+    if (b.z === a.z + 1 && overlap(a, b)) a.above.push(b.id);
+    if (b.z === a.z && Math.abs(b.y - a.y) < 2) {
+      if (b.x === a.x - 2) a.left.push(b.id);
+      if (b.x === a.x + 2) a.right.push(b.id);
+    }
+  }
+  return g;
+}
+let SIDE_BLOCKING = true;   // classic rule; off = only tiles on top block
+const freeWith = (t, alive) =>
+  !t.above.some(i => alive.has(i)) &&
+  (!SIDE_BLOCKING || !t.left.some(i => alive.has(i)) || !t.right.some(i => alive.has(i)));
+
+function solvableAssign(geom, ids, facePairs) {
+  for (let attempt = 0; attempt < 500; attempt++) {
+    const alive = new Set(ids), pairs = shuffleArr(facePairs.slice()), asg = new Map();
+    let idx = 0, ok = true;
+    while (alive.size) {
+      const free = [...alive].filter(i => freeWith(geom[i], alive));
+      if (free.length < 2) { ok = false; break; }
+      shuffleArr(free);
+      asg.set(free[0], pairs[idx]); asg.set(free[1], pairs[idx]); idx++;
+      alive.delete(free[0]); alive.delete(free[1]);
+    }
+    if (ok) return asg;
+  }
+  return null;
+}
+
+/* Deal faces by simulating a winning game with a tray of TRAY_SIZE slots
+   (a full tray loses, so at most TRAY_SIZE-1 unmatched tiles may be held).
+   pOpen = how often the simulated player takes a new album instead of completing
+   one already in the tray. When a pair is completed, the generator prefers a
+   partner that was NOT reachable when the first copy was taken, so the first copy
+   has to sit in the tray. Returns Map(id -> face) or null. */
+const TRAY_SIZE = 4;
+function assignWithTray(geom, ids, pairFaces, initialOpen, pOpen, attempts = 400) {
+  const cap = TRAY_SIZE - 1;
+  if (initialOpen.length > cap) return null;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const alive = new Set(ids), asg = new Map();
+    const open = initialOpen.map(face => ({ face, reachable: new Set() }));
+    let idx = 0, ok = true;
+    while (alive.size) {
+      const free = [...alive].filter(i => freeWith(geom[i], alive));
+      if (!free.length) { ok = false; break; }
+      const c = free[rnd(free.length)];
+      const remaining = alive.size;
+      const canOpen = idx < pairFaces.length && open.length < cap && remaining >= open.length + 2;
+      const mustOpen = open.length === 0;
+      if (mustOpen && !canOpen) { ok = false; break; }
+      if (mustOpen || (canOpen && Math.random() < pOpen)) {
+        open.push({ face: pairFaces[idx++], reachable: new Set(free) });
+        asg.set(c, open[open.length - 1].face);
+      } else {
+        const hidden = open.filter(o => !o.reachable.has(c));
+        const pool = hidden.length && Math.random() < .85 ? hidden : open;
+        const pick = pool[rnd(pool.length)];
+        asg.set(c, pick.face);
+        open.splice(open.indexOf(pick), 1);
+      }
+      alive.delete(c);
+    }
+    if (ok && !open.length && idx === pairFaces.length) return asg;
+  }
+  return null;
+}
+/* ---------- Game ---------- */
+const TILE = 116, HALF = TILE / 2, DEPTH = 10, PAD = 20;
+let covers = [], tiles = [], tray = [], history = [], layoutName = "", gameOver = false, lastFace = null;
+let zoom = 1;
+try { zoom = parseFloat(localStorage.getItem("metal-mahjong-zoom")) || 1; } catch (_) {}
+
+const aliveSet = () => new Set(tiles.filter(t => t.alive).map(t => t.id));
+const isFree = (t, alive = aliveSet()) => freeWith(t, alive);
+const pOpen = () => parseFloat($("diffSel").value);
+
+function newGame() {
+  if (!covers.length) return;
+  const choice = $("layoutSel").value;
+  const names = Object.keys(LAYOUTS);
+  layoutName = choice === "*" ? names[rnd(names.length)] : choice;
+  let geom;
+  try { geom = buildGeom(finalizeLayout(LAYOUTS[layoutName](), true)); }
+  catch (e) { status(`Layout "${layoutName}" failed to load: ${e.message}`); return; }
+  const order = shuffleArr(covers.map((_, i) => i));
+  const pairsPerAlbum = +$("copiesSel").value / 2;
+  const facePairs = [];
+  for (let i = 0; i < geom.length / 2; i++) facePairs.push(order[Math.floor(i / pairsPerAlbum) % order.length]);
+  const asg = assignWithTray(geom, geom.map(g => g.id), facePairs, [], pOpen());
+  if (!asg) { status(`Couldn't deal a winnable game on "${layoutName}". Pick another layout.`); return; }
+  tiles = geom.map(g => ({ ...g, face: asg.get(g.id), alive: true }));
+  tray = []; history = []; gameOver = false; lastFace = null;
+  $("lastCover").removeAttribute("src");
+  $("lastBtn").disabled = true;
+  $("lastInfo").innerHTML = `<div class="album">Tap free tiles to move them into the tray.</div>`;
+  $("overlay").classList.remove("show");
+  const albumsUsed = new Set(facePairs).size;
+  $("layoutName").textContent = `${layoutName}, ${Math.max(...geom.map(t => t.z)) + 1} levels, ${albumsUsed} albums`;
+  status("Two matching covers in the tray clear. A fourth unmatched cover loses.");
+  render();
+  $("boardWrap").scrollTo(0, 0);
+  music.boardChanged();
+  resetAuto();
+}
+
+function boardSize() {
+  const maxZ = Math.max(0, ...tiles.map(t => t.z));
+  const off = PAD + maxZ * DEPTH;
+  return {
+    off,
+    w: off + (Math.max(...tiles.map(t => t.x)) + 2) * HALF + PAD,
+    h: off + (Math.max(...tiles.map(t => t.y)) + 2) * HALF + PAD
+  };
+}
+
+const coverTitle = c => `${c.artist} — ${c.title}${c.year ? " (" + c.year + ")" : ""}`;
+
+function render() {
+  const board = $("board");
+  board.innerHTML = "";
+  const alive = aliveSet();
+  const { off, w, h } = boardSize();
+  for (const t of tiles) {
+    if (!t.alive) continue;
+    const c = covers[t.face];
+    const el = document.createElement("div");
+    const covered = t.above.some(i => alive.has(i));
+    el.className = "tile " + (covered ? "blocked covered" : freeWith(t, alive) ? "free" : "blocked sided");
+    el.style.left = (off + t.x * HALF - t.z * DEPTH) + "px";
+    el.style.top = (off + t.y * HALF - t.z * DEPTH) + "px";
+    el.style.zIndex = t.z * 10000 + t.y * 100 + t.x;
+    el.title = coverTitle(c);
+    el.tabIndex = 0;
+    el.dataset.id = t.id;
+    const img = document.createElement("img");
+    img.src = coverUrl(c.id); img.alt = el.title;
+    el.appendChild(img);
+    board.appendChild(el);
+  }
+  board.style.width = w + "px";
+  board.style.height = h + "px";
+  applyZoom();
+  renderTray();
+  $("tilesLeft").textContent = `${alive.size} tiles`;
+  $("btnUndo").disabled = !history.length;
+}
+
+function renderTray() {
+  const el = $("tray");
+  el.innerHTML = "";
+  for (let i = 0; i < TRAY_SIZE; i++) {
+    const slot = document.createElement("div");
+    slot.className = "slot";
+    slot.setAttribute("role", "listitem");
+    const id = tray[i];
+    if (id !== undefined) {
+      const c = covers[tiles[id].face];
+      const img = document.createElement("img");
+      img.src = coverUrl(c.id); img.alt = coverTitle(c); img.title = coverTitle(c);
+      slot.appendChild(img);
+    }
+    el.appendChild(slot);
+  }
+  el.classList.toggle("danger", tray.length >= TRAY_SIZE - 1);
+}
+
+function applyZoom() {
+  const board = $("board");
+  const w = parseFloat(board.style.width) || 0, h = parseFloat(board.style.height) || 0;
+  board.style.transform = `scale(${zoom})`;
+  $("sizer").style.width = w * zoom + "px";
+  $("sizer").style.height = h * zoom + "px";
+  try { localStorage.setItem("metal-mahjong-zoom", zoom); } catch (_) {}
+}
+function setZoom(z) { zoom = Math.max(.3, Math.min(2, Math.round(z * 100) / 100)); applyZoom(); }
+function fitZoom() {
+  const board = $("board"), wrap = $("boardWrap");
+  const w = parseFloat(board.style.width), h = parseFloat(board.style.height);
+  setZoom(Math.min((wrap.clientWidth - 24) / w, (wrap.clientHeight - 24) / h));
+}
+
+function clickTile(id) {
+  if (gameOver) return;
+  const t = tiles[id];
+  if (!t || !t.alive || !isFree(t)) return;
+  history.push({ id, tray: tray.slice() });
+  t.alive = false;
+  const k = tray.findIndex(j => tiles[j].face === t.face);
+  if (k >= 0) {
+    tray.splice(k, 1);
+    showMatch(t.face);
+    music.onMatch(t.face);
+    status("");
+  } else {
+    tray.push(id);
+    status(tray.length === TRAY_SIZE - 1 ? "One slot left. Only a match is safe now." : "");
+  }
+  render();
+  if (tray.length >= TRAY_SIZE) {
+    gameOver = true;
+    status("Tray full. Undo to back out, or start a new game.");
+    showOverlay("Tray full");
+  } else if (!tiles.some(t => t.alive) && !tray.length) {
+    gameOver = true;
+    showOverlay("Cleared");
+  }
+  resetAuto();
+}
+
+function showMatch(face) {
+  const c = covers[face];
+  lastFace = face;
+  $("lastCover").src = coverUrl(c.id, 250);
+  $("lastCover").alt = coverTitle(c);
+  $("lastBtn").disabled = false;
+  $("lastInfo").innerHTML = "";
+  const a = document.createElement("div"); a.className = "artist"; a.textContent = c.artist;
+  const b = document.createElement("div"); b.className = "album"; b.textContent = c.title + (c.year ? ` (${c.year})` : "");
+  $("lastInfo").append(a, b);
+}
+
+function undo() {
+  const last = history.pop();
+  if (!last) return;
+  tiles[last.id].alive = true;
+  tray = last.tray;
+  gameOver = false;
+  $("overlay").classList.remove("show");
+  status("");
+  render();
+  resetAuto();
+}
+
+function flash(ids) {
+  ids.forEach((id, i) => {
+    const el = document.querySelector(`.tile[data-id="${id}"]`);
+    if (!el) return;
+    el.classList.remove("hint"); void el.offsetWidth; el.classList.add("hint");
+    if (i === 0) el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+  });
+}
+
+function hint() {
+  if (gameOver) return;
+  const alive = aliveSet();
+  const free = tiles.filter(t => t.alive && freeWith(t, alive));
+  const trayMatch = free.find(t => tray.some(j => tiles[j].face === t.face));
+  if (trayMatch) { flash([trayMatch.id]); status("That one completes a cover in the tray."); return; }
+  const byFace = {};
+  free.forEach(t => (byFace[t.face] ||= []).push(t));
+  const pair = Object.values(byFace).find(g => g.length >= 2);
+  if (pair && tray.length <= TRAY_SIZE - 2) { flash([pair[0].id, pair[1].id]); status("Those two match each other."); return; }
+  status(tray.length >= TRAY_SIZE - 1
+    ? "No safe move. Undo or shuffle."
+    : "No match is reachable. Take a tile you think uncovers something useful.");
+}
+
+function reshuffle() {
+  if (gameOver) return;
+  const alive = tiles.filter(t => t.alive);
+  if (!alive.length) return;
+  const counts = {};
+  alive.forEach(t => counts[t.face] = (counts[t.face] || 0) + 1);
+  const trayFaces = tray.map(j => tiles[j].face);
+  trayFaces.forEach(f => counts[f]--);          // each tray tile's partner stays on the board
+  const pairFaces = [];
+  for (const [f, n] of Object.entries(counts)) for (let i = 0; i < n / 2; i++) pairFaces.push(+f);
+  const asg = assignWithTray(tiles, alive.map(t => t.id), shuffleArr(pairFaces), trayFaces, pOpen());
+  if (!asg) { status("Couldn't find a winnable shuffle from here. Try undo."); return; }
+  alive.forEach(t => t.face = asg.get(t.id));
+  history = [];
+  status("Shuffled into a winnable arrangement. Undo history cleared.");
+  render();
+  resetAuto();
+}
+
+function showOverlay(text) {
+  $("overlayText").textContent = text;
+  $("btnOverlayUndo").hidden = text !== "Tray full";
+  $("overlay").classList.add("show");
+}
+
+/* ---------- Auto-pick (optional) ----------
+   If enabled and no tile is picked within the chosen delay, the best move is made:
+   1) a free tile that completes a cover in the tray,
+   2) one of a matching pair that are both free,
+   3) the free tile whose removal uncovers a match (its own partner, a tray
+      partner, or a partner of another free tile), then whichever uncovers most.
+   With one tray slot left and no completing tile, it does nothing. */
+let autoTimer = null;
+
+function resetAuto() {
+  clearTimeout(autoTimer);
+  autoTimer = null;
+  const secs = +$("autoPick").value;
+  const bar = $("autoBar");
+  $("autoTrack").hidden = !secs;
+  bar.classList.remove("run");
+  if (!secs || gameOver || !tiles.some(t => t.alive) || document.hidden) return;
+  bar.style.setProperty("--auto-dur", secs + "s");
+  void bar.offsetWidth;                 // restart the CSS animation
+  bar.classList.add("run");
+  autoTimer = setTimeout(autoPick, secs * 1000);
+}
+
+function bestMove() {
+  const alive = aliveSet();
+  const free = tiles.filter(t => t.alive && freeWith(t, alive));
+  if (!free.length) return null;
+  const trayFaces = new Set(tray.map(j => tiles[j].face));
+  const completes = free.find(t => trayFaces.has(t.face));
+  if (completes) return completes.id;
+  if (tray.length >= TRAY_SIZE - 1) return null;
+  const byFace = {};
+  free.forEach(t => (byFace[t.face] ||= []).push(t));
+  const pair = Object.values(byFace).find(g => g.length >= 2);
+  if (pair) return pair[0].id;
+  let best = null, bestScore = -1;
+  for (const t of free) {
+    const without = new Set(alive);
+    without.delete(t.id);
+    const exposed = tiles.filter(u => u.alive && u.id !== t.id && !freeWith(u, alive) && freeWith(u, without));
+    let score = exposed.length;
+    if (exposed.some(u => u.face === t.face)) score += 1000;
+    if (exposed.some(u => trayFaces.has(u.face))) score += 500;
+    if (exposed.some(u => free.some(f => f.id !== t.id && f.face === u.face))) score += 300;
+    if (score > bestScore) { bestScore = score; best = t; }
+  }
+  return best ? best.id : null;
+}
+
+function autoPick() {
+  autoTimer = null;
+  $("autoBar").classList.remove("run");
+  if (gameOver) return;
+  if (drag) { autoTimer = setTimeout(autoPick, 1000); return; }   // wait until the peek ends
+  const id = bestMove();
+  if (id === null) { status("Time's up, but there's no safe move to make for you."); return; }
+  flash([id]);
+  status("Time's up. Auto-picked the best move.");
+  setTimeout(() => { if (!gameOver && tiles[id].alive && !drag) clickTile(id); else resetAuto(); }, 500);
+}
+document.addEventListener("visibilitychange", resetAuto);
+
+/* ---------- Music ----------
+   The song only changes when you make a match. The matched album's tracks are
+   ranked by Deezer popularity and played in that order (30-second previews),
+   looping until the next match. iTunes is the fallback. */
+function jsonp(url, timeout = 8000) {
+  return new Promise((resolve, reject) => {
+    const cb = "cb_" + Date.now() + "_" + rnd(1e6);
+    const s = document.createElement("script");
+    const done = () => { clearTimeout(timer); delete window[cb]; s.remove(); };
+    const timer = setTimeout(() => { done(); reject(new Error("timeout")); }, timeout);
+    window[cb] = data => { done(); resolve(data); };
+    s.onerror = () => { done(); reject(new Error("script failed")); };
+    s.src = url + "&callback=" + cb;
+    document.head.appendChild(s);
+  });
+}
+
+/* Album hits, most popular first. */
+const hitsCache = {};
+async function albumHits(c) {
+  const cached = hitsCache[c.id];
+  if (cached && Date.now() - cached.at < 20 * 60 * 1000) return cached.list;   // Deezer preview links expire
+  const na = norm(c.artist).slice(0, 8), nt = norm(c.title).slice(0, 10);
+  let list = [];
+  try {
+    const q = `artist:"${c.artist}" album:"${c.title}"`;
+    const data = await jsonp(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=50&output=jsonp`);
+    const seen = new Set();
+    list = (data.data || [])
+      .filter(x => norm(x.artist?.name || "").includes(na) && norm(x.album?.title || "").startsWith(nt) && !/live/i.test(x.album?.title || ""))
+      .sort((a, b) => b.rank - a.rank)
+      .filter(x => { const k = norm(x.title_short || x.title); if (seen.has(k)) return false; seen.add(k); return true; })
+      .map(x => ({ title: x.title_short || x.title, artist: x.artist.name, album: x.album.title, preview: x.preview }));
+  } catch (e) { console.warn("Deezer lookup failed", e); }
+  if (!list.length) {
+    try {
+      const url = `https://itunes.apple.com/search?media=music&entity=song&limit=25&term=${encodeURIComponent(c.artist + " " + c.title)}`;
+      let data;
+      try { data = await (await fetch(url)).json(); } catch (_) { data = await jsonp(url); }
+      list = (data.results || [])
+        .filter(x => x.previewUrl && norm(x.artistName || "").includes(na) && norm(x.collectionName || "").startsWith(nt) && !/live/i.test(x.collectionName || ""))
+        .map(x => ({ title: x.trackName, artist: x.artistName, album: x.collectionName, preview: x.previewUrl }));
+    } catch (e) { console.warn("iTunes lookup failed", e); }
+  }
+  hitsCache[c.id] = { at: Date.now(), list };
+  return list;
+}
+
+const music = {
+  audio: new Audio(),
+  on: true,
+  playing: false,
+  hits: [], idx: 0, face: null, token: 0,
+  mode() { return $("musSource").value; },
+
+  now(text, track) {
+    const el = $("musNow");
+    if (!track) { el.textContent = text; return; }
+    el.innerHTML = "";
+    const b = document.createElement("b"); b.textContent = track.title;
+    el.append(b, document.createTextNode(` by ${track.artist}, from ${track.album}${text ? " " + text : ""}`));
+  },
+  setPlaying(p) { this.playing = p; $("musPlay").textContent = p ? "Pause" : "Play"; },
+
+  async onMatch(face) {
+    const mode = this.mode();
+    if (mode === "embed") return;              // the embedded Spotify player can't be controlled from here
+    this.on = true;                            // a match always starts music, even if it was paused
+    const my = ++this.token;
+    const c = covers[face];
+    this.now(`Finding the biggest songs on ${c.title}…`);
+    const hits = await albumHits(c);
+    if (my !== this.token) return;
+    if (!hits.length) { this.now(`No tracks found for ${c.title}. Keeping the current song.`); return; }
+    this.face = face; this.hits = hits; this.idx = 0;
+    this.playPreview(0, my);
+  },
+
+  async playPreview(i, my = this.token) {
+    for (let n = 0; n < this.hits.length; n++) {
+      const idx = (i + n) % this.hits.length;
+      const h = this.hits[idx];
+      if (!h.preview) continue;
+      this.audio.src = h.preview;
+      try { await this.audio.play(); }
+      catch (e) {
+        if (e.name === "NotAllowedError") {       // browser autoplay block: leave it queued for the Play button
+          this.idx = idx; this.setPlaying(false);
+          this.now("(press Play: the browser blocked autoplay)", h);
+          return;
+        }
+        console.warn(e); continue;
+      }
+      if (my !== this.token) return;
+      this.idx = idx;
+      this.setPlaying(true);
+      this.now(`(hit ${idx + 1} of ${this.hits.length}, preview)`, h);
+      return;
+    }
+    this.setPlaying(false);
+    this.now("Previews for this album wouldn't play.");
+  },
+
+  next() {
+    if (!this.hits.length) return;
+    this.on = true;
+    this.playPreview(this.idx + 1);
+  },
+
+  toggle() {
+    if (this.playing) { this.audio.pause(); this.on = false; this.setPlaying(false); }
+    else if (this.hits.length && this.audio.currentTime === 0) { this.on = true; this.playPreview(this.idx); }
+    else if (this.audio.src && !this.audio.ended) { this.on = true; this.audio.play(); this.setPlaying(true); }
+    else if (this.hits.length) { this.on = true; this.playPreview(this.idx); }
+  },
+
+  stopAll() {
+    this.token++;
+    this.audio.pause();
+    this.setPlaying(false);
+  },
+
+  boardChanged() {},
+};
+music.audio.volume = 0.5;
+/* Unlock audio on the first tap so songs can start later, after the network lookup
+   finishes (Safari otherwise refuses play() outside the original gesture). */
+function silentWavUrl() {
+  const b = new ArrayBuffer(46), v = new DataView(b);
+  const w = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  w(0, "RIFF"); v.setUint32(4, 38, true); w(8, "WAVE"); w(12, "fmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, 8000, true); v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+  w(36, "data"); v.setUint32(40, 2, true); v.setUint8(44, 128); v.setUint8(45, 128);
+  return URL.createObjectURL(new Blob([b], { type: "audio/wav" }));
+}
+document.addEventListener("pointerdown", () => {
+  if (music.audio.src) return;
+  music.audio.src = silentWavUrl();
+  music.audio.play().then(() => music.audio.pause()).catch(() => {});
+}, { once: true, capture: true });
+music.audio.addEventListener("ended", () => { if (music.on && music.mode() === "board") music.playPreview(music.idx + 1); });
+
+$("musPlay").onclick = () => music.toggle();
+$("musNext").onclick = () => music.next();
+$("musVol").oninput = e => { music.audio.volume = +e.target.value; };
+$("lastBtn").onclick = () => { if (lastFace !== null) { music.on = true; music.onMatch(lastFace); } };
+
+function spotifyEmbed(link) {
+  const m = /open\.spotify\.com\/(?:intl-[a-z]+\/)?(playlist|album)\/([A-Za-z0-9]+)/.exec(link || "");
+  if (!m) return false;
+  const f = document.createElement("iframe");
+  f.src = `https://open.spotify.com/embed/${m[1]}/${m[2]}?theme=0`;
+  f.allow = "autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture";
+  f.loading = "lazy";
+  f.title = "Spotify player";
+  $("spotifyFrame").replaceChildren(f);
+  return true;
+}
+function showMusicSource() {
+  const mode = $("musSource").value;
+  $("musPlayer").hidden = mode === "embed";
+  $("musEmbed").hidden = mode !== "embed";
+}
+$("musSource").onchange = () => { music.stopAll(); music.hits = []; music.now("Make a match to hear that album's biggest songs."); showMusicSource(); saveSettings(); };
+$("spotifyLoad").onclick = () => {
+  if (spotifyEmbed($("spotifyUrl").value.trim())) saveSettings();
+  else status("That isn't a Spotify playlist or album link.");
+};
+
+/* ---------- Wiring ---------- */
+/* Press to take a tile; press and drag to lift it and preview what it uncovers.
+   Releasing after a drag snaps the tile back without taking it. */
+const DRAG_THRESHOLD = 8;
+let drag = null;
+$("board").addEventListener("pointerdown", e => {
+  const el = e.target.closest(".tile");
+  if (!el || e.button > 0 || gameOver) return;
+  e.preventDefault();
+  el.setPointerCapture(e.pointerId);
+  drag = { el, id: +el.dataset.id, x: e.clientX, y: e.clientY, pid: e.pointerId, moved: false, z: el.style.zIndex, peeked: [] };
+});
+$("board").addEventListener("pointermove", e => {
+  if (!drag || e.pointerId !== drag.pid) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (!drag.moved) {
+    if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+    drag.moved = true;
+    drag.el.classList.remove("snap");
+    drag.el.classList.add("dragging");
+    drag.el.style.zIndex = 999999;
+    // tiles that would become free if this one were gone
+    const alive = aliveSet();
+    const without = new Set(alive); without.delete(drag.id);
+    for (const t of tiles) {
+      if (!t.alive || t.id === drag.id) continue;
+      if (!freeWith(t, alive) && freeWith(t, without)) {
+        const el = document.querySelector(`.tile[data-id="${t.id}"]`);
+        if (el) { el.classList.add("peek"); drag.peeked.push(el); }
+      }
+    }
+  }
+  drag.el.style.transform = `translate(${dx / zoom}px, ${dy / zoom}px)`;
+});
+function endDrag(e, cancelled) {
+  if (!drag || e.pointerId !== drag.pid) return;
+  const d = drag;
+  drag = null;
+  if (!d.moved) {
+    if (!cancelled) clickTile(d.id);
+    return;
+  }
+  d.el.classList.remove("dragging");
+  d.el.classList.add("snap");
+  d.el.style.transform = "";
+  d.peeked.forEach(el => el.classList.remove("peek"));
+  setTimeout(() => { d.el.classList.remove("snap"); d.el.style.zIndex = d.z; }, 220);
+}
+$("board").addEventListener("pointerup", e => endDrag(e, false));
+$("board").addEventListener("pointercancel", e => endDrag(e, true));
+$("board").addEventListener("dragstart", e => e.preventDefault());
+$("board").addEventListener("keydown", e => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const el = e.target.closest(".tile"); if (el) { e.preventDefault(); clickTile(+el.dataset.id); }
+});
+
+/* Layout menu + imported layouts */
+const CUSTOM_KEY = "metal-mahjong-custom-layouts";
+function addLayoutOption(name) {
+  const o = document.createElement("option");
+  o.value = o.textContent = name;
+  $("layoutSel").appendChild(o);
+}
+Object.keys(LAYOUTS).forEach(addLayoutOption);
+let customLayouts = [];
+try { customLayouts = JSON.parse(localStorage.getItem(CUSTOM_KEY) || "[]"); } catch (_) {}
+for (const c of customLayouts) {
+  try { parseKmahjongg(c.text); LAYOUTS[c.name] = () => parseKmahjongg(c.text); addLayoutOption(c.name); } catch (_) {}
+}
+{ const any = document.createElement("option"); any.value = "*"; any.textContent = "Any layout"; $("layoutSel").appendChild(any); }
+$("btnImport").onclick = () => { $("importErr").textContent = ""; $("importDlg").showModal(); };
+$("importAdd").onclick = e => {
+  const name = $("importName").value.trim(), text = $("importText").value;
+  if (!name || !text.trim()) return;
+  e.preventDefault();
+  try {
+    const t = parseKmahjongg(text);
+    for (const p of t) for (const q of t)
+      if (p !== q && p.z === q.z && overlap(p, q)) throw new Error("Two tiles overlap on the same level");
+    if (t.length < 4) throw new Error("A layout needs at least 4 tiles");
+    const isNew = !LAYOUTS[name];
+    LAYOUTS[name] = () => parseKmahjongg(text);
+    if (isNew) addLayoutOption(name);
+    customLayouts = customLayouts.filter(c => c.name !== name).concat({ name, text });
+    try { localStorage.setItem(CUSTOM_KEY, JSON.stringify(customLayouts)); } catch (_) {}
+    $("importDlg").close();
+    $("layoutSel").value = name;
+    saveSettings();
+    newGame();
+  } catch (err) { $("importErr").textContent = err.message; }
+};
+
+/* Settings (remembered between sessions) */
+const SETTINGS_KEY = "metal-mahjong-settings";
+function saveSettings() {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+      copies: $("copiesSel").value, side: $("sideBlock").checked, autoDelay: $("autoPick").value, layout: $("layoutSel").value,
+      diff: $("diffSel").value, music: $("musSource").value, spotify: $("spotifyUrl").value.trim()
+    }));
+  } catch (_) {}
+}
+try {
+  const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+  if (s.copies) $("copiesSel").value = s.copies;
+  if (s.diff) $("diffSel").value = s.diff;
+  if (typeof s.side === "boolean") $("sideBlock").checked = s.side;
+  if (s.autoDelay && [...$("autoPick").options].some(o => o.value === s.autoDelay)) $("autoPick").value = s.autoDelay;
+  if (s.layout && [...$("layoutSel").options].some(o => o.value === s.layout)) $("layoutSel").value = s.layout;
+  if (s.spotify) { $("spotifyUrl").value = s.spotify; spotifyEmbed(s.spotify); }
+  if (s.music && [...$("musSource").options].some(o => o.value === s.music)) $("musSource").value = s.music;
+} catch (_) {}
+SIDE_BLOCKING = $("sideBlock").checked;
+showMusicSource();
+
+const restart = () => { saveSettings(); newGame(); };
+$("layoutSel").onchange = restart;
+$("copiesSel").onchange = restart;
+$("diffSel").onchange = restart;
+$("sideBlock").onchange = () => { SIDE_BLOCKING = $("sideBlock").checked; restart(); };
+$("autoPick").onchange = () => { saveSettings(); resetAuto(); };
+$("btnNew").onclick = newGame;
+$("btnOverlayNew").onclick = newGame;
+$("btnOverlayUndo").onclick = undo;
+$("btnHint").onclick = hint;
+$("btnShuffle").onclick = reshuffle;
+$("btnUndo").onclick = undo;
+$("btnReload").onclick = () => boot(true);
+$("zoomIn").onclick = () => setZoom(zoom + .1);
+$("zoomOut").onclick = () => setZoom(zoom - .1);
+$("zoomFit").onclick = fitZoom;
+
+async function boot(force = false) {
+  document.querySelectorAll("header button, header select").forEach(b => b.disabled = true);
+  try {
+    covers = await loadCovers(force);
+    if (!covers.length) throw new Error("No covers found");
+    newGame();
+    if (covers.length < FACES_NEEDED)
+      status(`${covers.length} albums loaded. Big boards will repeat some albums; Reload covers to try for more.`);
+  } catch (e) {
+    console.error(e);
+    status(`Couldn't load covers (${e.message}). Open this through a local server and use Reload covers.`);
+  } finally {
+    document.querySelectorAll("header button, header select").forEach(b => b.disabled = false);
+    $("btnUndo").disabled = !history.length;
+  }
+}
+renderTray();
+boot();
+</script>
+</body>
+</html>
