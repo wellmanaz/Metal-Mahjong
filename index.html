@@ -152,19 +152,27 @@ body.small .tile {
 body.small .tile.free { box-shadow: 3px 4px 0 var(--bone-edge), 4px 5px 0 var(--bone-dark), 0 0 0 2px rgba(230,220,195,.55), 5px 8px 8px rgba(0,0,0,.6); }
 body.phone .phoneOnly { display: inline-block; }
 body.phone .desktopOnly { display: none; }
-body.phone header { padding: 8px 10px 4px; gap: 6px 10px; }
+body.phone header { position: relative; padding: 8px 10px 4px; gap: 4px 10px; align-items: center; }
+body.phone #menuBtn { font-size: 22px; line-height: 1; padding: 6px 11px; }
 body.phone h1 { font-size: 28px; }
 body.phone .stats { font-size: 14px; gap: 8px; width: 100%; order: 3; }
-body.phone .controls { margin-left: auto; gap: 4px; }
-body.phone .controls button, body.phone .controls select { padding: 5px 8px; font-size: 14px; }
-body.phone .settings { display: none; }
-body.phone .settings.open {
-  display: flex; flex-wrap: wrap; gap: 6px; width: 100%; order: 10;
-  padding: 8px; background: #1f2226; border: 1px solid #3a3e44; border-radius: 4px;
+body.phone .controls {
+  display: none; position: absolute; top: 100%; left: 8px; right: 8px; z-index: 100000;
+  grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 0;
+  padding: 10px; background: #1f2226; border: 1px solid #3a3e44; border-radius: 6px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.7);
+  max-height: calc(100vh - 70px); overflow-y: auto;
 }
-body.phone .trayRow { padding: 4px 10px 6px; gap: 6px; }
+body.phone .controls.open { display: grid; }
+body.phone .controls button, body.phone .controls select { padding: 8px 6px; font-size: 15px; }
+body.phone #btnNew, body.phone #btnHint, body.phone #btnShuffle, body.phone #btnUndo { order: -1; }
+body.phone .settings { display: flex; flex-wrap: wrap; gap: 6px; grid-column: 1 / -1; }
+body.phone .settings > select, body.phone .settings > .toggle, body.phone .settings > button { flex: 1 1 45%; }
+body.phone .controls .music { grid-column: 1 / -1; width: 100%; border-top: 1px solid #3a3e44; padding-top: 8px; }
+body.phone .music select { width: 100%; }
+body.phone .trayRow { padding: 4px 10px 6px; gap: 4px; }
 body.phone .last { display: none; }
-body.phone .music { width: 100%; }
+body.phone #status { font-size: 14px; min-height: 1.2em; }
 body.phone #musNow { min-height: 0; font-size: 14px; }
 body.phone #boardWrap { padding: 0 4px 16px; }
 body.phone .credit { font-size: 12px; padding: 0 10px 8px; }
@@ -218,10 +226,10 @@ body.wide .credit { grid-column: 2; grid-row: 2; text-align: center; padding: 4p
 </head>
 <body>
 <header>
+  <button id="menuBtn" class="phoneOnly" aria-label="Menu" aria-expanded="false" aria-controls="menuPanel">☰</button>
   <h1>Metal Mahjong</h1>
   <div class="stats"><span id="layoutName"></span><span id="tilesLeft"></span></div>
-  <div class="controls">
-    <button id="btnSettings" class="phoneOnly" aria-expanded="false" aria-controls="settingsBox">Settings</button>
+  <div class="controls" id="menuPanel">
     <div id="settingsBox" class="settings">
     <select id="sizeSel" aria-label="Board size">
       <option value="auto">Board: auto</option>
@@ -1658,19 +1666,21 @@ showMusicSource();
 const restart = () => { saveSettings(); newGame(); };
 $("layoutSel").onchange = restart;
 $("sizeSel").onchange = restart;
-function setSettingsOpen(open) {
-  $("settingsBox").classList.toggle("open", open);
-  $("btnSettings").setAttribute("aria-expanded", open);
-  $("btnSettings").textContent = open ? "Close settings" : "Settings";
+/* Phone: every option lives in a menu under the ☰ button, so the tray and board get the screen. */
+function setMenuOpen(open) {
+  $("menuPanel").classList.toggle("open", open);
+  $("menuBtn").setAttribute("aria-expanded", open);
+  $("menuBtn").textContent = open ? "✕" : "☰";
 }
-$("btnSettings").onclick = () => setSettingsOpen(!$("settingsBox").classList.contains("open"));
-// On phones, the options fold away as soon as you touch the board.
-$("board").addEventListener("pointerdown", () => { if (isPhone()) setSettingsOpen(false); }, { capture: true });
+$("menuBtn").onclick = () => setMenuOpen(!$("menuPanel").classList.contains("open"));
 if (isPhone()) {
-  // keep the music-source menu with the other options so it folds away too
-  const src = document.querySelector(".musTop");
-  if (src) $("settingsBox").appendChild(src);
+  $("menuPanel").appendChild(document.querySelector(".music"));
   $("settingsBox").appendChild($("btnReload"));
+  // close when you touch the board, anywhere outside the menu, or after an action button
+  document.addEventListener("pointerdown", e => {
+    if (!e.target.closest("#menuPanel, #menuBtn")) setMenuOpen(false);
+  }, { capture: true });
+  ["btnNew", "btnHint", "btnShuffle", "btnUndo"].forEach(id => $(id).addEventListener("click", () => setMenuOpen(false)));
 }
 let resizeTimer = null;
 addEventListener("resize", () => {
