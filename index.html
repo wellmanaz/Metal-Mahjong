@@ -1658,10 +1658,20 @@ showMusicSource();
 const restart = () => { saveSettings(); newGame(); };
 $("layoutSel").onchange = restart;
 $("sizeSel").onchange = restart;
-$("btnSettings").onclick = () => {
-  const open = $("settingsBox").classList.toggle("open");
+function setSettingsOpen(open) {
+  $("settingsBox").classList.toggle("open", open);
   $("btnSettings").setAttribute("aria-expanded", open);
-};
+  $("btnSettings").textContent = open ? "Close settings" : "Settings";
+}
+$("btnSettings").onclick = () => setSettingsOpen(!$("settingsBox").classList.contains("open"));
+// On phones, the options fold away as soon as you touch the board.
+$("board").addEventListener("pointerdown", () => { if (isPhone()) setSettingsOpen(false); }, { capture: true });
+if (isPhone()) {
+  // keep the music-source menu with the other options so it folds away too
+  const src = document.querySelector(".musTop");
+  if (src) $("settingsBox").appendChild(src);
+  $("settingsBox").appendChild($("btnReload"));
+}
 let resizeTimer = null;
 addEventListener("resize", () => {
   clearTimeout(resizeTimer);
