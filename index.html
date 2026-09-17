@@ -110,6 +110,14 @@ button:disabled { opacity: .45; cursor: default; }
 }
 .tile img { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: 3px; pointer-events: none; background: #222; }
 .tile.blocked { cursor: default; }
+.fallback {
+  width: 100%; height: 100%; border-radius: 3px; background: linear-gradient(160deg, #3a2020, #1c1d20);
+  color: var(--bone); display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 2px;
+  text-align: center; padding: 4px; overflow: hidden; line-height: 1.1; font-size: 13px;
+}
+.fallback b { font-weight: 600; color: var(--brass); }
+body.small .fallback { font-size: 9px; padding: 2px; }
+.slot .fallback { font-size: 10px; }
 .tile.covered { filter: brightness(.38) saturate(.25); }
 .tile.sided { filter: brightness(.6) saturate(.45); }
 .tile.free { box-shadow: 5px 6px 0 var(--bone-edge), 6px 7px 0 var(--bone-dark), 0 0 0 2px rgba(230,220,195,.55), 8px 12px 14px rgba(0,0,0,.6); }
@@ -438,24 +446,36 @@ function probeImage(src, timeout = 10000) {
 
 
 /* ---------- Album pool by genre + decade ----------
-   Curated albums are looked up on MusicBrainz once and cached across filters
-   ("artist|title" -> entry, or 0 when not found). If a filter has too few,
-   MusicBrainz is searched by genre tag and release-date range. */
-const ALBUM_CACHE_KEY = "metal-mahjong-albums-v3";
-const TAGFILL_KEY = "metal-mahjong-tagfill-v3";
-let albumCache = {}, tagFill = {};
+   Every catalog album's MusicBrainz release-group ID, release year and
+   cover-art availability are precomputed (tools/precompute.mjs) and stored on
+   its CATALOG row, so normal play makes no MusicBrainz requests at all.
+   resolveCatalog() only runs for catalog rows that have no precomputed data
+   (e.g. albums added to the catalog without re-running the precompute step). */
+const ALBUM_CACHE_KEY = "metal-mahjong-albums-v4";
+let albumCache = {};
 try { albumCache = JSON.parse(localStorage.getItem(ALBUM_CACHE_KEY) || "{}"); } catch (_) {}
-try { tagFill = JSON.parse(localStorage.getItem(TAGFILL_KEY) || "{}"); } catch (_) {}
 function saveCaches() {
-  try {
-    localStorage.setItem(ALBUM_CACHE_KEY, JSON.stringify(albumCache));
-    localStorage.setItem(TAGFILL_KEY, JSON.stringify(tagFill));
-  } catch (_) {}
+  try { localStorage.setItem(ALBUM_CACHE_KEY, JSON.stringify(albumCache)); } catch (_) {}
 }
 const ckey = a => `${a.artist}|${a.title}`;
 const inDecade = (year, d) => year >= DECADES[d].from && year <= DECADES[d].to;
 const catalogFor = (genre, decade) =>
   CATALOG.filter(a => (genre === "all" || a.genres.includes(genre)) && inDecade(a.year, decade));
+
+/* Precomputed rows win over anything cached locally, except a cover that has
+   since been confirmed missing in this browser. */
+function seedFromPrecomputed() {
+  for (const a of CATALOG) {
+    if (a.pre === undefined) continue;             // no precomputed data for this row
+    const k = ckey(a);
+    if (a.pre === null) { albumCache[k] = 0; continue; }
+    const prev = albumCache[k];
+    albumCache[k] = {
+      id: a.pre.id, artist: a.artist, title: a.title, year: a.pre.year || String(a.year),
+      cover: prev && prev.id === a.pre.id && prev.cover === false ? false : a.pre.cover,
+    };
+  }
+}
 
 async function probeAll(entries, quiet) {
   const todo = entries.filter(e => e.cover === undefined);
@@ -478,17 +498,9 @@ async function resolveCatalog(list, quiet = false) {
     try { results = await mbFetch(`(${q}) AND primarytype:album`); }
     catch (e) { console.warn(e); continue; }          // network trouble: leave uncached so it's retried
     for (const a of batch) {
-      const nt = norm(a.title), na = norm(a.artist);
-      const hit = results
-        .filter(rg => {
-          const rt = norm(rg.title);
-          const titleOk = rt === nt || (nt.length >= 8 && rt.startsWith(nt) && rt.length - nt.length <= 4);
-          return isStudioAlbum(rg) && titleOk && norm(creditName(rg)).includes(na);
-        })
-        .sort((x, y) => (y.score || 0) - (x.score || 0))[0];
+      const hit = matchReleaseGroup(results, a);
       if (hit) {
-        const e = toEntry(hit);
-        if (!e.year) e.year = String(a.year);
+        const e = { id: hit.id, artist: a.artist, title: a.title, year: (hit["first-release-date"] || "").slice(0, 4) || String(a.year) };
         albumCache[ckey(a)] = e;
         fresh.push(e);
       } else albumCache[ckey(a)] = 0;
@@ -498,1051 +510,1033 @@ async function resolveCatalog(list, quiet = false) {
   saveCaches();
 }
 
-async function tagSearch(genre, decade, exclude, need) {
-  const { from, to } = DECADES[decade];
-  const out = [];
-  for (const tag of GENRES[genre].tags) {
-    if (out.length >= need * 1.5) break;
-    status(`Searching MusicBrainz for "${tag}" albums…`);
-    try {
-      const rgs = await mbFetch(`tag:"${tag}" AND primarytype:album AND firstreleasedate:[${from}-01-01 TO ${to}-12-31]`);
-      for (const rg of rgs) {
-        if (!isStudioAlbum(rg) || exclude.has(rg.id)) continue;
-        exclude.add(rg.id);
-        out.push(toEntry(rg));
-      }
-    } catch (e) { console.warn(e); }
-  }
-  const pick = shuffleArr(out).slice(0, Math.ceil(need * 1.5));
-  await probeAll(pick);
-  return pick.filter(e => e.cover);
+/* Same matching rule the precompute tool uses. */
+function matchReleaseGroup(results, a) {
+  const nt = norm(a.title), na = norm(a.artist);
+  return results
+    .filter(rg => {
+      const rt = norm(rg.title);
+      const titleOk = rt === nt || (nt.length >= 8 && rt.startsWith(nt) && rt.length - nt.length <= 4);
+      return isStudioAlbum(rg) && titleOk && norm(creditName(rg)).includes(na);
+    })
+    .sort((x, y) => (y.score || 0) - (x.score || 0))[0];
 }
 
 async function loadPool(genre, decade, need, force = false) {
-  if (force) { albumCache = {}; tagFill = {}; }
   const cands = shuffleArr(catalogFor(genre, decade));
-  const good = () => cands
+  if (force) {
+    // "Reload covers": forget this browser's missing-cover verdicts and check them again
+    const recheck = cands.map(a => albumCache[ckey(a)]).filter(e => e && e.cover === false);
+    recheck.forEach(e => e.cover = undefined);
+    await probeAll(recheck);
+    saveCaches();
+  }
+  // Only rows without precomputed data hit MusicBrainz; cap it so a filter never waits minutes.
+  const have = cands.filter(a => { const e = albumCache[ckey(a)]; return e && e.cover !== false; }).length;
+  const unresolved = cands.filter(a => !(ckey(a) in albumCache));
+  const take = unresolved.slice(0, Math.max(0, Math.ceil((need - have) * 1.4) + 8));
+  if (take.length) await resolveCatalog(take);
+  return cands
     .map(a => albumCache[ckey(a)])
     .filter(e => e && e.cover && inDecade(parseInt(e.year, 10) || 0, decade));
-  let pool = good();
-  if (pool.length < need) {
-    const unresolved = cands.filter(a => !(ckey(a) in albumCache));
-    const take = unresolved.slice(0, Math.ceil((need - pool.length) * 1.4) + 8);
-    if (take.length) await resolveCatalog(take);
-    pool = good();
-  }
-  if (pool.length < need) {
-    const fk = `${genre}|${decade}`;
-    if (!tagFill[fk]) {
-      tagFill[fk] = await tagSearch(genre, decade, new Set(pool.map(p => p.id)), need - pool.length);
-      saveCaches();
-    }
-    const have = new Set(pool.map(p => p.id));
-    pool = pool.concat(tagFill[fk].filter(e => !have.has(e.id)));
-  }
-  return pool;
-}
-
-/* After a game starts, quietly look up a few more curated albums for the
-   current filter so later games draw from a bigger pool. */
-async function topUpPool(genre, decade, onNew) {
-  const unresolved = shuffleArr(catalogFor(genre, decade).filter(a => !(ckey(a) in albumCache))).slice(0, 15);
-  if (!unresolved.length) return;
-  await resolveCatalog(unresolved, true);
-  const fresh = unresolved.map(a => albumCache[ckey(a)])
-    .filter(e => e && e.cover && inDecade(parseInt(e.year, 10) || 0, decade));
-  if (fresh.length) onNew(fresh);
 }
 /* Curated catalog: year | genres | artist | title.
    Genres: heavy thrash death black doom sludge power prog groove nu core industrial.
    The decade shown in-game comes from MusicBrainz's first-release date, not this year. */
 const CATALOG_TEXT = `
-1970|heavy doom|Black Sabbath|Black Sabbath
-1970|heavy doom|Black Sabbath|Paranoid
-1971|heavy doom|Black Sabbath|Master of Reality
-1972|heavy doom|Black Sabbath|Vol. 4
-1973|heavy|Black Sabbath|Sabbath Bloody Sabbath
-1972|heavy|Deep Purple|Machine Head
-1973|heavy|Budgie|Never Turn Your Back on a Friend
-1976|heavy|Judas Priest|Sad Wings of Destiny
-1978|heavy|Judas Priest|Stained Class
-1976|heavy|Rainbow|Rising
-1978|heavy|Rainbow|Long Live Rock 'n' Roll
-1979|heavy|Scorpions|Lovedrive
-1979|heavy|Motörhead|Overkill
-1979|heavy|Motörhead|Bomber
-1980|heavy|Iron Maiden|Iron Maiden
-1981|heavy|Iron Maiden|Killers
-1982|heavy|Iron Maiden|The Number of the Beast
-1983|heavy|Iron Maiden|Piece of Mind
-1984|heavy|Iron Maiden|Powerslave
-1986|heavy|Iron Maiden|Somewhere in Time
-1988|heavy|Iron Maiden|Seventh Son of a Seventh Son
-1980|heavy|Judas Priest|British Steel
-1982|heavy|Judas Priest|Screaming for Vengeance
-1984|heavy|Judas Priest|Defenders of the Faith
-1980|heavy|Motörhead|Ace of Spades
-1980|heavy doom|Black Sabbath|Heaven and Hell
-1983|heavy|Dio|Holy Diver
-1984|heavy|Dio|The Last in Line
-1985|heavy|Dio|Sacred Heart
-1980|heavy|Ozzy Osbourne|Blizzard of Ozz
-1981|heavy|Ozzy Osbourne|Diary of a Madman
-1983|heavy|Ozzy Osbourne|Bark at the Moon
-1980|heavy|Saxon|Wheels of Steel
-1980|heavy|Saxon|Strong Arm of the Law
-1981|heavy|Saxon|Denim and Leather
-1982|heavy|Accept|Restless and Wild
-1983|heavy|Accept|Balls to the Wall
-1982|heavy|Scorpions|Blackout
-1984|heavy|W.A.S.P.|W.A.S.P.
-1985|heavy|W.A.S.P.|The Last Command
-1980|heavy|Diamond Head|Lightning to the Nations
-1980|heavy|Angel Witch|Angel Witch
-1982|heavy|Tank|Filth Hounds of Hades
-1982|heavy|Raven|Wiped Out
-1983|heavy|Satan|Court in the Act
-1983|heavy|Grim Reaper|See You in Hell
-1983|heavy black|Mercyful Fate|Melissa
-1984|heavy black|Mercyful Fate|Don't Break the Oath
-1986|heavy|King Diamond|Fatal Portrait
-1987|heavy|King Diamond|Abigail
-1984|heavy|Metal Church|Metal Church
-1988|heavy power|Riot|Thundersteel
-1984|heavy|Omen|Battle Cry
-1984|heavy doom|Cirith Ungol|King of the Dead
-1983|heavy|Manilla Road|Crystal Logic
-1987|heavy power|Savatage|Hall of the Mountain King
-1984|heavy prog|Queensrÿche|The Warning
-1986|heavy prog|Queensrÿche|Rage for Order
-1988|heavy prog|Queensrÿche|Operation: Mindcrime
-1986|heavy prog|Fates Warning|Awaken the Guardian
-1981|black heavy|Venom|Welcome to Hell
-1982|black heavy|Venom|Black Metal
-1985|power|Helloween|Walls of Jericho
-1987|power|Helloween|Keeper of the Seven Keys, Part I
-1988|power|Helloween|Keeper of the Seven Keys, Part II
-1984|power heavy|Manowar|Hail to England
-1984|power heavy|Manowar|Sign of the Hammer
-1988|power heavy|Manowar|Kings of Metal
-1988|power|Blind Guardian|Battalions of Fear
-1983|thrash|Metallica|Kill 'Em All
-1984|thrash|Metallica|Ride the Lightning
-1986|thrash|Metallica|Master of Puppets
-1988|thrash|Metallica|...And Justice for All
-1983|thrash|Slayer|Show No Mercy
-1985|thrash|Slayer|Hell Awaits
-1986|thrash|Slayer|Reign in Blood
-1988|thrash|Slayer|South of Heaven
-1985|thrash|Megadeth|Killing Is My Business... and Business Is Good!
-1986|thrash|Megadeth|Peace Sells... but Who's Buying?
-1988|thrash|Megadeth|So Far, So Good... So What!
-1985|thrash|Anthrax|Spreading the Disease
-1987|thrash|Anthrax|Among the Living
-1987|thrash|Testament|The Legacy
-1988|thrash|Testament|The New Order
-1989|thrash|Testament|Practice What You Preach
-1985|thrash|Exodus|Bonded by Blood
-1989|thrash|Exodus|Fabulous Disaster
-1986|thrash|Kreator|Pleasure to Kill
-1989|thrash|Kreator|Extreme Aggression
-1987|thrash|Sodom|Persecution Mania
-1989|thrash|Sodom|Agent Orange
-1985|thrash|Destruction|Infernal Overkill
-1986|thrash|Destruction|Eternal Devastation
-1987|thrash|Overkill|Taking Over
-1986|thrash|Dark Angel|Darkness Descends
-1986|thrash|Nuclear Assault|Game Over
-1987|thrash|Sacrifice|Forward to Termination
-1985|thrash|Razor|Evil Invaders
-1989|thrash|Annihilator|Alice in Hell
-1988|thrash|Vio-lence|Eternal Nightmare
-1987|thrash|Death Angel|The Ultra-Violence
-1987|thrash|Sacred Reich|Ignorance
-1987|thrash prog|Voivod|Killing Technology
-1988|thrash prog|Voivod|Dimension Hatröss
-1989|thrash prog|Voivod|Nothingface
-1989|thrash prog|Coroner|No More Color
-1985|thrash death|Possessed|Seven Churches
-1987|thrash death|Sepultura|Schizophrenia
-1989|thrash death|Sepultura|Beneath the Remains
-1987|death|Death|Scream Bloody Gore
-1988|death|Death|Leprosy
-1989|death|Morbid Angel|Altars of Madness
-1989|death|Obituary|Slowly We Rot
-1989|death|Carcass|Symphonies of Sickness
-1987|death|Napalm Death|Scum
-1989|death|Autopsy|Severed Survival
-1987|black|Bathory|Under the Sign of the Black Mark
-1988|black|Bathory|Blood Fire Death
-1985|black thrash|Celtic Frost|To Mega Therion
-1987|black thrash|Celtic Frost|Into the Pandemonium
-1986|doom|Candlemass|Epicus Doomicus Metallicus
-1987|doom|Candlemass|Nightfall
-1986|doom|Saint Vitus|Born Too Late
-1984|doom|Trouble|Psalm 9
-1985|doom|Pentagram|Relentless
-1988|industrial|Ministry|The Land of Rape and Honey
-1989|industrial|Ministry|The Mind Is a Terrible Thing to Taste
-1989|industrial sludge|Godflesh|Streetcleaner
-1985|prog|Watchtower|Energetic Disassembly
-1990|thrash|Slayer|Seasons in the Abyss
-1990|thrash|Megadeth|Rust in Peace
-1992|thrash heavy|Megadeth|Countdown to Extinction
-1990|thrash|Anthrax|Persistence of Time
-1990|thrash|Kreator|Coma of Souls
-1990|thrash|Forbidden|Twisted Into Form
-1990|thrash|Testament|Souls of Black
-1991|heavy|Metallica|Metallica
-1991|thrash death|Sepultura|Arise
-1993|groove thrash|Sepultura|Chaos A.D.
-1996|groove nu|Sepultura|Roots
-1990|death|Death|Spiritual Healing
-1991|death prog|Death|Human
-1993|death prog|Death|Individual Thought Patterns
-1995|death prog|Death|Symbolic
-1998|death prog|Death|The Sound of Perseverance
-1991|death|Morbid Angel|Blessed Are the Sick
-1993|death|Morbid Angel|Covenant
-1995|death|Morbid Angel|Domination
-1990|death|Obituary|Cause of Death
-1992|death|Obituary|The End Complete
-1991|death|Carcass|Necroticism: Descanting the Insalubrious
-1993|death|Carcass|Heartwork
-1991|death doom|Autopsy|Mental Funeral
-1990|death|Deicide|Deicide
-1992|death|Deicide|Legion
-1990|death|Cannibal Corpse|Eaten Back to Life
-1991|death|Cannibal Corpse|Butchered at Birth
-1992|death|Cannibal Corpse|Tomb of the Mutilated
-1994|death|Cannibal Corpse|The Bleeding
-1990|death|Entombed|Left Hand Path
-1991|death|Entombed|Clandestine
-1991|death|Dismember|Like an Ever Flowing Stream
-1991|death|Suffocation|Effigy of the Forgotten
-1995|death|Suffocation|Pierced from Within
-1991|death prog|Atheist|Unquestionable Presence
-1993|death prog|Cynic|Focus
-1991|death|Pestilence|Testimony of the Ancients
-1995|death|At the Gates|Slaughter of the Soul
-1996|death|In Flames|The Jester Race
-1995|death|Dark Tranquillity|The Gallery
-1994|death doom|Amorphis|Tales from the Thousand Lakes
-1998|death prog|Gorguts|Obscura
-1995|death prog|Opeth|Orchid
-1998|death prog|Opeth|My Arms, Your Hearse
-1999|death prog|Opeth|Still Life
-1999|death power|Children of Bodom|Hatebreeder
-1994|black|Mayhem|De Mysteriis Dom Sathanas
-1992|black|Darkthrone|A Blaze in the Northern Sky
-1993|black|Darkthrone|Under a Funeral Moon
-1994|black|Darkthrone|Transilvanian Hunger
-1994|black|Emperor|In the Nightside Eclipse
-1997|black|Emperor|Anthems to the Welkin at Dusk
-1993|black|Immortal|Pure Holocaust
-1995|black|Immortal|Battles in the North
-1999|black|Immortal|At the Heart of Winter
-1994|black|Burzum|Hvis lyset tar oss
-1996|black|Burzum|Filosofem
-1996|black|Satyricon|Nemesis Divina
-1995|black death|Dissection|Storm of the Light's Bane
-1997|black power|Dimmu Borgir|Enthrone Darkness Triumphant
-1996|black|Cradle of Filth|Dusk... and Her Embrace
-1999|black|Marduk|Panzer Division Marduk
-1995|black|Ulver|Bergtatt
-1991|doom|Cathedral|Forest of Equilibrium
-1991|doom|Paradise Lost|Gothic
-1993|doom|Paradise Lost|Icon
-1993|doom|My Dying Bride|Turn Loose the Swans
-1995|doom|Anathema|The Silent Enigma
-1997|doom sludge|Electric Wizard|Come My Fanatics....
-1992|doom sludge|Sleep|Sleep's Holy Mountain
-1993|doom|Type O Negative|Bloody Kisses
-1992|doom|Candlemass|Chapter VI
-1994|doom|Tiamat|Wildhoney
-1996|doom death|Katatonia|Brave Murder Day
-1990|doom death|Winter|Into Darkness
-1993|sludge|Eyehategod|Take as Needed for Pain
-1996|sludge|Eyehategod|Dopesick
-1993|sludge|Crowbar|Crowbar
-1995|sludge groove|Down|NOLA
-1992|sludge|Kyuss|Blues for the Red Sun
-1994|sludge|Kyuss|Welcome to Sky Valley
-1993|sludge|Melvins|Houdini
-1994|sludge|Acid Bath|When the Kite String Pops
-1996|sludge|Neurosis|Through Silver in Blood
-1999|sludge|Neurosis|Times of Grace
-1994|sludge heavy|Corrosion of Conformity|Deliverance
-1995|sludge|Monster Magnet|Dopes to Infinity
-1997|sludge|Fu Manchu|The Action Is Go
-1990|groove thrash|Pantera|Cowboys From Hell
-1992|groove|Pantera|Vulgar Display of Power
-1994|groove|Pantera|Far Beyond Driven
-1996|groove|Pantera|The Great Southern Trendkill
-1994|groove thrash|Machine Head|Burn My Eyes
-1990|groove thrash|Exhorder|Slaughter in the Vatican
-1992|groove industrial|White Zombie|La Sexorcisto: Devil Music, Volume One
-1995|groove industrial|White Zombie|Astro-Creep: 2000
-1994|groove industrial|Prong|Cleansing
-1992|groove core|Biohazard|Urban Discipline
-1994|nu|Korn|Korn
-1996|nu|Korn|Life Is Peachy
-1998|nu|Korn|Follow the Leader
-1999|nu|Korn|Issues
-1995|nu|Deftones|Adrenaline
-1997|nu|Deftones|Around the Fur
-1997|nu|Limp Bizkit|Three Dollar Bill, Y'all
-1999|nu|Limp Bizkit|Significant Other
-1999|nu|Slipknot|Slipknot
-1998|nu|System of a Down|System of a Down
-1997|nu|Coal Chamber|Coal Chamber
-1999|nu industrial|Static-X|Wisconsin Death Trip
-1997|nu|Sevendust|Sevendust
-1998|nu groove|Soulfly|Soulfly
-1990|power|Blind Guardian|Tales from the Twilight World
-1992|power|Blind Guardian|Somewhere Far Beyond
-1995|power|Blind Guardian|Imaginations From the Other Side
-1998|power|Blind Guardian|Nightfall in Middle-Earth
-1995|power|Gamma Ray|Land of the Free
-1997|power|Stratovarius|Visions
-1997|power|HammerFall|Glory to the Brave
-1998|power|Rhapsody|Symphony of Enchanted Lands
-1996|power thrash|Iced Earth|The Dark Saga
-1998|power thrash|Iced Earth|Something Wicked This Way Comes
-1994|power|Helloween|Master of the Rings
-1996|power|Helloween|The Time of the Oath
-1998|power|Nightwish|Oceanborn
-1993|power|Angra|Angels Cry
-1999|power|Sonata Arctica|Ecliptica
-1992|prog|Dream Theater|Images and Words
-1994|prog|Dream Theater|Awake
-1999|prog|Dream Theater|Metropolis Pt. 2: Scenes From a Memory
-1990|prog heavy|Queensrÿche|Empire
-1991|prog|Fates Warning|Parallels
-1995|prog|Meshuggah|Destroy Erase Improve
-1998|prog|Meshuggah|Chaosphere
-1993|prog|Tool|Undertow
-1996|prog|Tool|Ænima
-1997|prog|Devin Townsend|Ocean Machine: Biomech
-1997|prog power|Symphony X|The Divine Wings of Tragedy
-1996|industrial sludge|Ministry|Filth Pig
-1994|industrial|Nine Inch Nails|The Downward Spiral
-1992|industrial|Godflesh|Pure
-1995|industrial groove|Fear Factory|Demanufacture
-1998|industrial groove|Fear Factory|Obsolete
-1995|industrial|Rammstein|Herzeleid
-1997|industrial|Rammstein|Sehnsucht
-1996|industrial|Marilyn Manson|Antichrist Superstar
-1995|industrial|KMFDM|Nihil
-1997|industrial|Strapping Young Lad|City
-1995|core|Earth Crisis|Destroy the Machines
-1997|core|Hatebreed|Satisfaction Is the Death of Desire
-1999|core|Botch|We Are the Romans
-1996|core|Integrity|Humanity Is the Devil
-1999|core prog|The Dillinger Escape Plan|Calculating Infinity
-2005|thrash|Kreator|Enemy of God
-2009|thrash|Kreator|Hordes of Chaos
-2008|thrash|Testament|The Formation of Damnation
-2004|thrash|Megadeth|The System Has Failed
-2009|thrash|Megadeth|Endgame
-2006|thrash|Slayer|Christ Illusion
-2009|thrash|Slayer|World Painted Blood
-2008|thrash|Metallica|Death Magnetic
-2005|thrash|Municipal Waste|Hazardous Mutation
-2007|thrash|Municipal Waste|The Art of Partying
-2009|thrash|Havok|Burn
-2007|thrash|Evile|Enter the Grave
-2004|thrash|Exodus|Tempo of the Damned
-2008|thrash|Toxic Holocaust|An Overdose of Death...
-2008|thrash|Warbringer|War Without End
-2002|death|Nile|In Their Darkened Shrines
-2005|death|Nile|Annihilation of the Wicked
-2004|death black|Behemoth|Demigod
-2007|death black|Behemoth|The Apostasy
-2009|death black|Behemoth|Evangelion
-2001|death prog|Opeth|Blackwater Park
-2005|death prog|Opeth|Ghost Reveries
-2008|death prog|Opeth|Watershed
-2002|death|Amon Amarth|Versus the World
-2006|death|Amon Amarth|With Oden on Our Side
-2008|death|Amon Amarth|Twilight of the Thunder God
-2000|death|In Flames|Clayman
-2006|death|In Flames|Come Clarity
-2000|death power|Children of Bodom|Follow the Reaper
-2003|death power|Children of Bodom|Hate Crew Deathroll
-2002|death|Hate Eternal|King of All Kings
-2004|death prog|Necrophagist|Epitaph
-2006|death|Decapitated|Organic Hallucinosis
-2006|death|Cannibal Corpse|Kill
-2007|death|The Black Dahlia Murder|Nocturnal
-2002|death|Bloodbath|Resurrection Through Carnage
-2005|death prog groove|Gojira|From Mars to Sirius
-2008|death prog groove|Gojira|The Way of All Flesh
-2002|death|Dark Tranquillity|Damage Done
-2009|death prog|Obscura|Cosmogenesis
-2007|black|Watain|Sworn to the Dark
-2001|black|Emperor|Prometheus: The Discipline of Fire & Demise
-2003|black|Dimmu Borgir|Death Cult Armageddon
-2004|black|Deathspell Omega|Si monumentum requires, circumspice
-2007|black|Deathspell Omega|Fas – Ite, Maledicti, in Ignem Aeternum
-2007|black|Wolves in the Throne Room|Two Hunters
-2004|black|Leviathan|Tentacles of Whorror
-2008|black|Nachtmystium|Assassins: Black Meddle, Part 1
-2006|black|Satyricon|Now, Diabolical
-2006|black|Darkthrone|The Cult Is Alive
-2004|black|Marduk|Plague Angel
-2004|black|Drudkh|Autumn Aurora
-2002|black doom|Agalloch|The Mantle
-2007|black|Alcest|Souvenirs d'un autre monde
-2005|black|1349|Hellfire
-2002|black|Immortal|Sons of Northern Darkness
-2000|doom sludge|Electric Wizard|Dopethrone
-2007|doom|Electric Wizard|Witchcult Today
-2005|doom|Candlemass|Candlemass
-2007|doom|Candlemass|King of the Grey Islands
-2006|doom|Warning|Watching From a Distance
-2002|doom|Reverend Bizarre|In the Rectory of the Bizarre Reverend
-2005|doom death|Swallow the Sun|Ghosts of Loss
-2006|doom|Ahab|The Call of the Wretched Sea
-2003|doom|Type O Negative|Life Is Killing Me
-2005|doom|Sunn O)))|Black One
-2006|doom|Katatonia|The Great Cold Distance
-2003|doom sludge|Sleep|Dopesmoker
-2002|sludge|Mastodon|Remission
-2004|sludge prog|Mastodon|Leviathan
-2006|sludge prog|Mastodon|Blood Mountain
-2009|sludge prog|Mastodon|Crack the Skye
-2007|sludge|Baroness|Red Album
-2009|sludge|Baroness|Blue Record
-2002|sludge|Isis|Oceanic
-2004|sludge|Isis|Panopticon
-2009|sludge|Kylesa|Static Tensions
-2005|sludge|High on Fire|Blessed Black Wings
-2007|sludge|High on Fire|Death Is This Communion
-2004|sludge|Neurosis|The Eye of Every Storm
-2008|sludge|Torche|Meanderthal
-2002|sludge groove|Down|Down II: A Bustle in Your Hedgerow
-2004|sludge|Clutch|Blast Tyrant
-2009|sludge|Red Fang|Red Fang
-2007|sludge|Weedeater|God Luck and Good Speed
-2006|sludge|Cult of Luna|Somewhere Along the Highway
-2001|sludge|Crowbar|Sonic Excess in Its Purest Form
-2006|sludge heavy|The Sword|Age of Winters
-2003|groove|Lamb of God|As the Palaces Burn
-2004|groove|Lamb of God|Ashes of the Wake
-2006|groove|Lamb of God|Sacrament
-2009|groove|Lamb of God|Wrath
-2003|groove thrash|Machine Head|Through the Ashes of Empires
-2007|groove thrash|Machine Head|The Blackening
-2005|groove|DevilDriver|The Fury of Our Maker's Hand
-2003|groove|Chimaira|The Impossibility of Reason
-2004|groove|Damageplan|New Found Power
-2007|groove|Five Finger Death Punch|The Way of the Fist
-2002|groove sludge|Superjoint Ritual|Use Once and Destroy
-2000|groove|Pantera|Reinventing the Steel
-2000|groove nu|Soulfly|Primitive
-2000|nu|Linkin Park|Hybrid Theory
-2003|nu|Linkin Park|Meteora
-2001|nu|Slipknot|Iowa
-2004|nu|Slipknot|Vol. 3: (The Subliminal Verses)
-2008|nu|Slipknot|All Hope Is Gone
-2001|nu|System of a Down|Toxicity
-2002|nu|System of a Down|Steal This Album!
-2005|nu|System of a Down|Mezmerize
-2005|nu|System of a Down|Hypnotize
-2000|nu|Deftones|White Pony
-2003|nu|Deftones|Deftones
-2006|nu|Deftones|Saturday Night Wrist
-2002|nu|Korn|Untouchables
-2000|nu|Disturbed|The Sickness
-2002|nu|Disturbed|Believe
-2005|nu|Disturbed|Ten Thousand Fists
-2000|nu|Papa Roach|Infest
-2000|nu|Mudvayne|L.D. 50
-2000|nu|Limp Bizkit|Chocolate Starfish and the Hot Dog Flavored Water
-2001|nu|P.O.D.|Satellite
-2001|nu|Drowning Pool|Sinner
-2001|nu|Ill Niño|Revolution Revolución
-2001|nu|Sevendust|Animosity
-2003|nu|Evanescence|Fallen
-2001|nu industrial|Static-X|Machine
-2002|power|Blind Guardian|A Night at the Opera
-2001|power|Sonata Arctica|Silence
-2003|power|Sonata Arctica|Winterheart's Guild
-2000|power|Nightwish|Wishmaster
-2002|power|Nightwish|Century Child
-2004|power|Nightwish|Once
-2003|power|DragonForce|Valley of the Damned
-2006|power|DragonForce|Inhuman Rampage
-2003|power prog|Kamelot|Epica
-2005|power prog|Kamelot|The Black Halo
-2002|power|HammerFall|Crimson Thunder
-2001|power thrash|Iced Earth|Horror Show
-2001|power|Edguy|Mandrake
-2004|power|Edguy|Hellfire Club
-2000|power|Stratovarius|Infinite
-2005|power|Sabaton|Primo Victoria
-2008|power|Sabaton|The Art of War
-2002|power|Rhapsody|Power of the Dragonflame
-2001|power|Avantasia|The Metal Opera
-2001|power|Primal Fear|Nuclear Fire
-2003|power|Epica|The Phantom Agony
-2004|power|Within Temptation|The Silent Force
-2000|prog power|Symphony X|V: The New Mythology Suite
-2007|prog power|Symphony X|Paradise Lost
-2002|prog|Dream Theater|Six Degrees of Inner Turbulence
-2003|prog|Dream Theater|Train of Thought
-2005|prog|Dream Theater|Octavarium
-2007|prog|Dream Theater|Systematic Chaos
-2001|prog|Tool|Lateralus
-2006|prog|Tool|10,000 Days
-2002|prog|Meshuggah|Nothing
-2008|prog|Meshuggah|obZen
-2002|prog|Porcupine Tree|In Absentia
-2007|prog|Porcupine Tree|Fear of a Blank Planet
-2005|prog core|Between the Buried and Me|Alaska
-2007|prog core|Between the Buried and Me|Colors
-2002|prog|Pain of Salvation|Remedy Lane
-2008|prog death|Cynic|Traced in Air
-2001|prog|Devin Townsend|Terria
-2002|core|Killswitch Engage|Alive or Just Breathing
-2004|core|Killswitch Engage|The End of Heartache
-2006|core|Killswitch Engage|As Daylight Dies
-2005|core|As I Lay Dying|Shadows Are Security
-2007|core|As I Lay Dying|An Ocean Between Us
-2001|core|Converge|Jane Doe
-2004|core|Converge|You Fail Me
-2009|core|Converge|Axe to Fall
-2005|core thrash|Trivium|Ascendancy
-2006|core thrash|Trivium|The Crusade
-2008|core thrash|Trivium|Shogun
-2004|core|Shadows Fall|The War Within
-2004|core|Unearth|The Oncoming Storm
-2005|core heavy|Bullet for My Valentine|The Poison
-2007|core|August Burns Red|Messengers
-2009|core|August Burns Red|Constellations
-2004|core prog|The Dillinger Escape Plan|Miss Machine
-2007|core prog|The Dillinger Escape Plan|Ire Works
-2002|core|Norma Jean|Bless the Martyr and Kiss the Child
-2004|core|Atreyu|The Curse
-2008|core|Bring Me the Horizon|Suicide Season
-2007|core|Parkway Drive|Horizons
-2002|core|Hatebreed|Perseverance
-2006|core|Underoath|Define the Great Line
-2003|core heavy|Avenged Sevenfold|Waking the Fallen
-2001|industrial|Rammstein|Mutter
-2004|industrial|Rammstein|Reise, Reise
-2005|industrial|Rammstein|Rosenrot
-2009|industrial|Rammstein|Liebe ist für alle da
-2001|industrial groove|Fear Factory|Digimortal
-2004|industrial groove|Fear Factory|Archetype
-2004|industrial thrash|Ministry|Houses of the Molé
-2006|industrial thrash|Ministry|Rio Grande Blood
-2000|industrial|Marilyn Manson|Holy Wood (In the Shadow of the Valley of Death)
-2003|industrial|Marilyn Manson|The Golden Age of Grotesque
-2003|industrial nu|Static-X|Shadow Zone
-2005|industrial|Nine Inch Nails|With Teeth
-2007|industrial|Nine Inch Nails|Year Zero
-2001|industrial|Godflesh|Hymns
-2005|industrial prog|Strapping Young Lad|Alien
-2001|industrial groove|Rob Zombie|The Sinister Urge
-2000|heavy|Iron Maiden|Brave New World
-2003|heavy|Iron Maiden|Dance of Death
-2006|heavy|Iron Maiden|A Matter of Life and Death
-2005|heavy|Judas Priest|Angel of Retribution
-2008|heavy|Judas Priest|Nostradamus
-2002|heavy|Dio|Killing the Dragon
-2009|heavy doom|Heaven & Hell|The Devil You Know
-2004|heavy|Motörhead|Inferno
-2001|heavy|Ozzy Osbourne|Down to Earth
-2003|heavy groove|Black Label Society|The Blessed Hellride
-2008|heavy|Enforcer|Into the Night
-2004|heavy|Saxon|Lionheart
-2005|heavy|Avenged Sevenfold|City of Evil
-2003|heavy nu|Metallica|St. Anger
-2011|thrash|Havok|Time Is Up
-2013|thrash|Havok|Unnatural Selection
-2017|thrash|Havok|Conformicide
-2012|thrash|Kreator|Phantom Antichrist
-2017|thrash|Kreator|Gods of Violence
-2012|thrash|Testament|Dark Roots of Earth
-2016|thrash|Testament|Brotherhood of the Snake
-2014|thrash|Exodus|Blood In, Blood Out
-2016|thrash|Megadeth|Dystopia
-2016|thrash heavy|Metallica|Hardwired… to Self-Destruct
-2015|thrash|Slayer|Repentless
-2011|thrash prog|Vektor|Outer Isolation
-2016|thrash prog|Vektor|Terminal Redux
-2013|thrash|Power Trip|Manifest Decimation
-2017|thrash|Power Trip|Nightmare Logic
-2012|thrash|Municipal Waste|The Fatal Feast
-2016|thrash|Sodom|Decision Day
-2010|thrash|Overkill|Ironbound
-2010|thrash|Death Angel|Relentless Retribution
-2019|thrash|Death Angel|Humanicide
-2017|thrash|Warbringer|Woe to the Vanquished
-2013|thrash|Toxic Holocaust|Chemistry of Consciousness
-2012|death prog groove|Gojira|L'Enfant sauvage
-2016|death prog groove|Gojira|Magma
-2014|death black|Behemoth|The Satanist
-2018|death|Tomb Mold|Manor of Infinite Forms
-2019|death prog|Blood Incantation|Hidden History of the Human Race
-2015|death|Horrendous|Anareta
-2017|death|Morbid Angel|Kingdoms Disdained
-2017|death|Cannibal Corpse|Red Before Black
-2011|death prog|Obscura|Omnivium
-2013|death prog|Ulcerate|Vermis
-2016|death prog|Ulcerate|Shrines of Paralysis
-2013|death prog|Gorguts|Colored Sands
-2013|death|Carcass|Surgical Steel
-2013|death|Amon Amarth|Deceiver of the Gods
-2016|death|Amon Amarth|Jomsviking
-2016|death|Dark Tranquillity|Atoma
-2016|death doom|Insomnium|Winter's Gate
-2017|death|The Black Dahlia Murder|Nightbringers
-2018|death prog|Rivers of Nihil|Where Owls Know My Name
-2012|death|Nile|At the Gate of Sethu
-2012|death|Cattle Decapitation|Monolith of Inhumanity
-2015|death|Cattle Decapitation|The Anthropocene Extinction
-2014|death prog|Fallujah|The Flesh Prevails
-2014|death thrash|Revocation|Deathless
-2014|death|Bloodbath|Grand Morbid Funeral
-2017|death|Dying Fetus|Wrong One to Fuck With
-2016|death|Venom Prison|Animus
-2013|black|Deafheaven|Sunbather
-2015|black|Deafheaven|New Bermuda
-2018|black|Deafheaven|Ordinary Corrupt Human Love
-2010|black|Watain|Lawless Darkness
-2013|black|Watain|The Wild Hunt
-2015|black|Mgła|Exercises in Futility
-2012|black|Mgła|With Hearts Toward None
-2015|black|Batushka|Litourgiya
-2011|black|Wolves in the Throne Room|Celestial Lineage
-2017|black|Wolves in the Throne Room|Thrice Woven
-2016|black|Uada|Devoid of Light
-2012|black|Panopticon|Kentucky
-2010|black|Alcest|Écailles de lune
-2016|black|Alcest|Kodama
-2015|black prog|Dødheimsgard|A Umbra Omega
-2014|black|Mayhem|Esoteric Warfare
-2019|black|Mayhem|Daemon
-2018|black|Immortal|Northern Chaos Gods
-2011|black|Liturgy|Aesthethica
-2015|black|Der Weg einer Freiheit|Stellar
-2012|doom|Pallbearer|Sorrow and Extinction
-2014|doom|Pallbearer|Foundations of Burden
-2017|doom|Pallbearer|Heartless
-2013|doom|Windhand|Soma
-2011|doom sludge|Yob|Atma
-2014|doom sludge|Yob|Clearing the Path to Ascend
-2018|doom sludge|Yob|Our Raw Heart
-2010|doom|Electric Wizard|Black Masses
-2014|doom|Electric Wizard|Time to Die
-2017|doom|Bell Witch|Mirror Reaper
-2016|doom|Khemmis|Hunted
-2018|doom|Khemmis|Desolation
-2019|doom|Candlemass|The Door to Doom
-2015|doom|Pentagram|Curious Volume
-2015|doom|Paradise Lost|The Plague Within
-2017|doom death|Paradise Lost|Medusa
-2015|doom|Crypt Sermon|Out of the Garden
-2015|doom death|Swallow the Sun|Songs From the North I, II & III
-2011|doom heavy|Uncle Acid & the Deadbeats|Blood Lust
-2013|doom|Cathedral|The Last Spire
-2012|doom|Ahab|The Giant
-2015|doom sludge|Monolord|Vænir
-2014|doom sludge|Conan|Blood Eagle
-2011|sludge prog|Mastodon|The Hunter
-2014|sludge prog|Mastodon|Once More 'Round the Sun
-2017|sludge prog|Mastodon|Emperor of Sand
-2012|sludge|Baroness|Yellow & Green
-2015|sludge|Baroness|Purple
-2019|sludge|Baroness|Gold & Grey
-2010|sludge|Kylesa|Spiral Shadow
-2010|sludge|High on Fire|Snakes for the Divine
-2012|sludge|High on Fire|De Vermis Mysteriis
-2015|sludge|High on Fire|Luminiferous
-2018|sludge|High on Fire|Electric Messiah
-2011|sludge|Red Fang|Murder the Mountains
-2013|sludge|Red Fang|Whales and Leeches
-2012|sludge|Torche|Harmonicraft
-2014|sludge doom|Thou|Heathen
-2017|sludge doom|Primitive Man|Caustic
-2013|sludge|Inter Arma|Sky Burial
-2010|sludge heavy|Kvelertak|Kvelertak
-2013|sludge heavy|Kvelertak|Meir
-2014|sludge|Eyehategod|Eyehategod
-2011|sludge|Crowbar|Sever the Wicked Hand
-2013|sludge|Cult of Luna|Vertikal
-2019|sludge|Cult of Luna|A Dawn to Fear
-2012|sludge|Neurosis|Honor Found in Decay
-2016|sludge|Neurosis|Fires Within Fires
-2015|sludge|Elder|Lore
-2018|sludge doom|Sleep|The Sciences
-2015|sludge|Weedeater|Goliathan
-2012|groove|Lamb of God|Resolution
-2015|groove|Lamb of God|VII: Sturm und Drang
-2011|groove thrash|Machine Head|Unto the Locust
-2014|groove thrash|Machine Head|Bloodstone & Diamonds
-2011|groove|Five Finger Death Punch|American Capitalist
-2011|groove|DevilDriver|Beast
-2017|groove thrash|Sepultura|Machine Messiah
-2016|groove prog|Jinjer|King of Everything
-2019|groove prog|Jinjer|Macro
-2011|groove|Chimaira|The Age of Hell
-2015|groove|Soulfly|Archangel
-2010|groove heavy|Black Label Society|Order of the Black
-2014|nu|Slipknot|.5: The Gray Chapter
-2019|nu|Slipknot|We Are Not Your Kind
-2011|nu industrial|Korn|The Path of Totality
-2016|nu|Korn|The Serenity of Suffering
-2019|nu|Korn|The Nothing
-2012|nu|Deftones|Koi No Yokan
-2016|nu|Deftones|Gore
-2010|nu|Deftones|Diamond Eyes
-2010|nu|Linkin Park|A Thousand Suns
-2012|nu|Linkin Park|Living Things
-2014|nu|Linkin Park|The Hunting Party
-2010|nu|Disturbed|Asylum
-2015|nu|Disturbed|Immortalized
-2012|nu heavy|Stone Sour|House of Gold & Bones, Part 1
-2011|nu|Limp Bizkit|Gold Cobra
-2017|nu core|Motionless in White|Graveyard Shift
-2014|nu core|Issues|Issues
-2015|nu|Coal Chamber|Rivals
-2010|power|Sabaton|Coat of Arms
-2012|power|Sabaton|Carolus Rex
-2014|power|Sabaton|Heroes
-2016|power|Sabaton|The Last Stand
-2019|power|Sabaton|The Great War
-2011|power|Nightwish|Imaginaerum
-2015|power|Nightwish|Endless Forms Most Beautiful
-2011|power|Powerwolf|Blood of the Saints
-2013|power|Powerwolf|Preachers of the Night
-2015|power|Powerwolf|Blessed & Possessed
-2018|power|Powerwolf|The Sacrament of Sin
-2010|power|Blind Guardian|At the Edge of Time
-2015|power|Blind Guardian|Beyond the Red Mirror
-2014|power|DragonForce|Maximum Overload
-2012|power prog|Kamelot|Silverthorn
-2015|power prog|Kamelot|Haven
-2015|power|Helloween|My God-Given Right
-2016|power|Avantasia|Ghostlights
-2013|power|Gloryhammer|Tales From the Kingdom of Fife
-2015|power|Gloryhammer|Space 1992: Rise of the Chaos Wizards
-2011|power|HammerFall|Infected
-2014|power|Epica|The Quantum Enigma
-2013|power|Stratovarius|Nemesis
-2015|power heavy|Visigoth|The Revenant King
-2017|power|Unleash the Archers|Apex
-2014|power thrash|Iced Earth|Plagues of Babylon
-2011|prog|Opeth|Heritage
-2014|prog|Opeth|Pale Communion
-2016|prog|Opeth|Sorceress
-2019|prog|Opeth|In Cauda Venenum
-2011|prog|Dream Theater|A Dramatic Turn of Events
-2019|prog|Dream Theater|Distance Over Time
-2019|prog|Tool|Fear Inoculum
-2012|prog|Periphery|Periphery II: This Time It's Personal
-2016|prog|Periphery|Periphery III: Select Difficulty
-2013|prog|TesseracT|Altered State
-2013|prog|Haken|The Mountain
-2016|prog|Haken|Affinity
-2018|prog|Haken|Vector
-2013|prog|Leprous|Coal
-2015|prog|Leprous|The Congregation
-2017|prog|Leprous|Malina
-2012|prog core|Between the Buried and Me|The Parallax II: Future Sequence
-2011|prog|Animals as Leaders|Weightless
-2014|prog|Animals as Leaders|The Joy of Motion
-2012|prog|Devin Townsend Project|Epicloud
-2012|prog|Meshuggah|Koloss
-2016|prog|Meshuggah|The Violent Sleep of Reason
-2019|prog|Soen|Lotus
-2013|prog core|Protest the Hero|Volition
-2012|prog death|Ne Obliviscaris|Portal of I
-2014|core|Architects|Lost Forever // Lost Together
-2016|core|Architects|All Our Gods Have Abandoned Us
-2018|core|Architects|Holy Hell
-2013|core|Bring Me the Horizon|Sempiternal
-2015|core nu|Bring Me the Horizon|That's the Spirit
-2010|core|Parkway Drive|Deep Blue
-2012|core|Parkway Drive|Atlas
-2015|core|Parkway Drive|Ire
-2018|core heavy|Parkway Drive|Reverence
-2013|core|Killswitch Engage|Disarm the Descent
-2016|core|Killswitch Engage|Incarnate
-2019|core|Killswitch Engage|Atonement
-2011|core|August Burns Red|Leveler
-2013|core|August Burns Red|Rescue & Restore
-2010|core prog|The Dillinger Escape Plan|Option Paralysis
-2013|core prog|The Dillinger Escape Plan|One of Us Is the Killer
-2016|core prog|The Dillinger Escape Plan|Dissociation
-2012|core|Converge|All We Love We Leave Behind
-2017|core|Converge|The Dusk in Us
-2014|core|Code Orange|I Am King
-2017|core industrial|Code Orange|Forever
-2012|core|Every Time I Die|Ex Lives
-2016|core|Every Time I Die|Low Teens
-2016|core|Knocked Loose|Laugh Tracks
-2019|core|Knocked Loose|A Different Shade of Blue
-2011|core thrash|Trivium|In Waves
-2017|core thrash|Trivium|The Sin and the Sentence
-2015|core|Northlane|Node
-2014|core|Beartooth|Disgusting
-2019|industrial|Rammstein|Rammstein
-2012|industrial thrash|Ministry|Relapse
-2018|industrial thrash|Ministry|AmeriKKKant
-2010|industrial groove|Fear Factory|Mechanize
-2012|industrial groove|Fear Factory|The Industrialist
-2015|industrial groove|Fear Factory|Genexus
-2012|industrial|Marilyn Manson|Born Villain
-2015|industrial|Marilyn Manson|The Pale Emperor
-2017|industrial|Marilyn Manson|Heaven Upside Down
-2013|industrial|Nine Inch Nails|Hesitation Marks
-2014|industrial sludge|Godflesh|A World Lit Only by Fire
-2017|industrial sludge|Godflesh|Post Self
-2013|industrial groove|Rob Zombie|Venomous Rat Regeneration Vendor
-2018|industrial|Author & Punisher|Beastland
-2015|industrial|Lindemann|Skills in Pills
-2019|industrial|3Teeth|Metawar
-2010|heavy|Ghost|Opus Eponymous
-2013|heavy|Ghost|Infestissumam
-2015|heavy|Ghost|Meliora
-2018|heavy|Ghost|Prequelle
-2010|heavy|Iron Maiden|The Final Frontier
-2015|heavy|Iron Maiden|The Book of Souls
-2014|heavy|Judas Priest|Redeemer of Souls
-2018|heavy|Judas Priest|Firepower
-2013|heavy doom|Black Sabbath|13
-2013|heavy|Enforcer|Death by Fire
-2015|heavy|Night Demon|Curse the Night
-2013|heavy|Satan|Life Sentence
-2015|heavy|Saxon|Battering Ram
-2013|heavy|Volbeat|Outlaw Gentlemen & Shady Ladies
-2010|heavy|Avenged Sevenfold|Nightmare
-2013|heavy|Avenged Sevenfold|Hail to the King
-2015|heavy|Motörhead|Bad Magic
-2010|heavy|Accept|Blood of the Nations
-2014|heavy|Accept|Blind Rage
-2016|heavy power|Eternal Champion|The Armor of Ire
-2015|heavy black|Tribulation|The Children of the Night
-2021|heavy|Iron Maiden|Senjutsu
-2024|heavy|Judas Priest|Invincible Shield
-2022|heavy|Ghost|Impera
-2025|heavy|Ghost|Skeletá
-2020|heavy|Ozzy Osbourne|Ordinary Man
-2022|heavy|Ozzy Osbourne|Patient Number 9
-2023|heavy thrash|Metallica|72 Seasons
-2021|heavy groove|Black Label Society|Doom Crew Inc.
-2022|heavy|Saxon|Carpe Diem
-2021|heavy|Volbeat|Servant of the Mind
-2023|heavy prog|Avenged Sevenfold|Life Is But a Dream…
-2022|heavy|Night Demon|Year of the Demon
-2021|heavy|Unto Others|Strength
-2020|heavy power|Eternal Champion|Ravening Iron
-2022|thrash|Kreator|Hate Über Alles
-2020|thrash|Testament|Titans of Creation
-2025|thrash|Testament|Para Bellum
-2022|thrash|Megadeth|The Sick, the Dying… and the Dead!
-2021|thrash|Exodus|Persona Non Grata
-2020|thrash|Havok|V
-2022|thrash|Municipal Waste|Electrified Brain
-2020|thrash|Sodom|Genesis XIX
-2020|thrash|Warbringer|Weapons of Tomorrow
-2021|thrash core|Enforced|Kill Grid
-2023|thrash|Overkill|Scorched
-2022|thrash|Destruction|Diabolical
-2020|thrash|Heathen|Empire of the Blind
-2023|thrash black|Hellripper|Warlocks Grim & Withered Hags
-2022|death prog|Blood Incantation|Timewave Zero
-2024|death prog|Blood Incantation|Absolute Elsewhere
-2021|death prog groove|Gojira|Fortitude
-2021|death|Cannibal Corpse|Violence Unimagined
-2023|death|Cannibal Corpse|Chaos Horrific
-2021|death|Carcass|Torn Arteries
-2020|death|Undeath|Lesions of a Different Kind
-2022|death|Undeath|It's Time…to Rise From the Grave
-2021|death|Frozen Soul|Crypt of Ice
-2023|death|Tomb Mold|The Enduring Spirit
-2021|death|Sanguisugabogg|Tortured Whole
-2020|death prog|Ulcerate|Stare Into Death and Be Still
-2024|death prog|Ulcerate|Cutting the Throat of God
-2020|death black prog|Imperial Triumphant|Alphaville
-2022|death black prog|Imperial Triumphant|Spirit of Ecstasy
-2023|death|Obituary|Dying of Everything
-2023|death|Dying Fetus|Make Them Beg for Death
-2024|death|The Black Dahlia Murder|Servitude
-2022|death|Amon Amarth|The Great Heathen Army
-2020|death|Dark Tranquillity|Moment
-2024|death|Dark Tranquillity|Endtime Signals
-2021|death prog|Rivers of Nihil|The Work
-2023|death|Cattle Decapitation|Terrasite
-2024|death|Gatecreeper|Dark Superstition
-2022|death|Bloodbath|Survival of the Sickest
-2023|death core|200 Stab Wounds|Manual Manic Procedures
-2021|death prog|Obscura|A Valediction
-2023|death prog|Ne Obliviscaris|Exul
-2022|death black|Behemoth|Opvs Contra Natvram
-2021|black|Deafheaven|Infinite Granite
-2025|black|Deafheaven|Lonely People With Power
-2021|black|Wolves in the Throne Room|Primordial Arcana
-2021|black|Spectral Wound|A Diabolic Thirst
-2022|black|Blackbraid|Blackbraid I
-2023|black|Blackbraid|Blackbraid II
-2021|black|Panopticon|...And Again Into the Light
-2022|black|Watain|The Agony & Ecstasy of Watain
-2020|black|Uada|Djinn
-2024|black|Alcest|Les Chants de l'Aurore
-2020|black|Wayfarer|A Romance With Violence
-2022|black|Gaerea|Mirage
-2021|black|Darkthrone|Eternal Hails……
-2022|black|Darkthrone|Astral Fortress
-2023|black|Immortal|War Against All
-2023|black|Dawn Ray'd|To Know the Light
-2020|doom|Pallbearer|Forgotten Days
-2024|doom|Pallbearer|Mind Burns Alive
-2021|doom|Khemmis|Deceiver
-2020|doom heavy|Spirit Adrift|Enlightened in Eternity
-2023|doom|Bell Witch|Future's Shadow Part 1: The Clandestine Gate
-2022|doom|Candlemass|Sweet Evil Sun
-2020|doom death|Paradise Lost|Obsidian
-2021|doom heavy|Green Lung|Black Harvest
-2022|doom|Messa|Close
-2021|doom sludge|King Woman|Celestial Blues
-2020|doom death|My Dying Bride|The Ghost of Orion
-2021|doom death|Swallow the Sun|Moonflowers
-2023|doom prog|Katatonia|Sky Void of Stars
-2024|doom heavy|Crypt Sermon|The Stygian Rose
-2022|sludge doom|Mizmor & Thou|Myopia
-2021|sludge prog|Mastodon|Hushed and Grim
-2024|sludge|High on Fire|Cometh the Storm
-2023|sludge|Baroness|Stone
-2022|sludge industrial|Chat Pile|God's Country
-2024|sludge doom|Thou|Umbilical
-2020|sludge doom|Primitive Man|Immersion
-2022|sludge|Cult of Luna|The Long Road North
-2023|sludge|Inter Arma|New Heaven
-2021|sludge|Red Fang|Arrows
-2022|sludge|Crowbar|Zero and Below
-2021|sludge|Eyehategod|A History of Nomadic Behavior
-2022|sludge doom|Elder|Innate Passage
-2020|sludge heavy|Kvelertak|Splid
-2023|sludge heavy|Kvelertak|Endling
-2021|sludge doom|Monolord|Your Time to Shine
-2022|sludge|Mantar|Pain Is Forever and This Is the End
-2022|sludge doom|Conan|Evidence of Immortality
-2022|power|Sabaton|The War to End All Wars
-2025|power|Sabaton|Legends
-2021|power|Powerwolf|Call of the Wild
-2024|power|Powerwolf|Wake Up the Wicked
-2020|power|Nightwish|Human. :II: Nature.
-2024|power|Nightwish|Yesterwynde
-2022|power|Blind Guardian|The God Machine
-2021|power|Helloween|Helloween
-2024|power|DragonForce|Warp Speed Warriors
-2020|power|Unleash the Archers|Abyss
-2024|power|Unleash the Archers|Phantoma
-2023|power|Gloryhammer|Return to the Kingdom of Fife
-2023|power prog|Kamelot|The Awakening
-2022|power|Avantasia|A Paranormal Evening With the Moonflower Society
-2021|power|Epica|Omega
-2025|power|Epica|Aspiral
-2022|power|HammerFall|Hammer of Dawn
-2022|power|Stratovarius|Survive
-2024|power|Sonata Arctica|Clear Cold Beyond
-2021|power|Seven Spires|Gods of Debauchery
-2024|prog|Opeth|The Last Will and Testament
-2021|prog|Dream Theater|A View From the Top of the World
-2025|prog|Dream Theater|Parasomnia
-2020|prog|Haken|Virus
-2023|prog|Haken|Fauna
-2021|prog|Leprous|Aphelion
-2024|prog|Leprous|Melodies of Atonement
-2023|prog|Periphery|Periphery V: Djent Is Not a Genre
-2023|prog|TesseracT|War of Being
-2021|prog core|Between the Buried and Me|Colors II
-2021|prog|Soen|Imperial
-2023|prog|Soen|Memorial
-2020|prog|Caligula's Horse|Rise Radiant
-2024|prog|Caligula's Horse|Charcoal Grace
-2022|prog|Animals as Leaders|Parrhesia
-2022|prog|Devin Townsend|Lightwork
-2022|prog|Meshuggah|Immutable
-2021|prog death|Cynic|Ascension Codes
-2021|prog|Vola|Witness
-2021|prog nu|Sleep Token|This Place Will Become Your Tomb
-2023|prog nu|Sleep Token|Take Me Back to Eden
-2020|prog industrial|Igorrr|Spirituality and Distortion
-2020|groove|Lamb of God|Lamb of God
-2022|groove|Lamb of God|Omens
-2021|groove prog|Jinjer|Wallflowers
-2025|groove prog|Jinjer|Duél
-2022|groove thrash|Machine Head|Øf Kingdøm and Crøwn
-2025|groove thrash|Machine Head|Unatøned
-2020|groove thrash|Sepultura|Quadra
-2020|groove|Five Finger Death Punch|F8
-2022|groove|Five Finger Death Punch|AfterLife
-2020|groove|DevilDriver|Dealing With Demons I
-2022|groove|Soulfly|Totem
-2022|groove core|Fit for an Autopsy|Oh What the Future Holds
-2020|groove core|Hatebreed|Weight of the False Self
-2022|nu|Slipknot|The End, So Far
-2022|nu|Korn|Requiem
-2020|nu|Deftones|Ohms
-2025|nu|Deftones|Private Music
-2024|nu|Linkin Park|From Zero
-2020|nu core|Tallah|Matriphagy
-2020|nu industrial|Static-X|Project: Regeneration, Vol. 1
-2022|nu|Disturbed|Divisive
-2021|nu|Limp Bizkit|Still Sucks
-2022|nu|Papa Roach|Ego Trip
-2020|nu core|Bring Me the Horizon|Post Human: Survival Horror
-2023|nu|Kim Dracula|A Gradual Decline in Morale
-2020|nu core|Loathe|I Let It In and It Took Everything
-2021|nu|Tetrarch|Unstable
-2021|core prog|Spiritbox|Eternal Blue
-2025|core prog|Spiritbox|Tsunami Sea
-2024|core|Knocked Loose|You Won't Go Before You're Supposed To
-2021|core|Architects|For Those That Wish to Exist
-2022|core|Architects|The Classic Symptoms of a Broken Spirit
-2025|core|Architects|The Sky, the Earth & All Between
-2024|core nu|Bring Me the Horizon|Post Human: Nex Gen
-2022|core|Parkway Drive|Darker Still
-2020|core|Polaris|The Death of Me
-2023|core|Polaris|Fatalism
-2025|core|Killswitch Engage|This Consequence
-2020|core|August Burns Red|Guardians
-2023|core|August Burns Red|Death Below
-2021|core doom|Converge|Bloodmoon: I
-2021|core|Every Time I Die|Radical
-2022|core|Counterparts|A Eulogy for Those Still Here
-2023|core|Currents|The Death We Seek
-2021|core thrash|Trivium|In the Court of the Dragon
-2020|core thrash|Trivium|What the Dead Men Say
-2021|core|Wage War|Manic
-2023|core|Invent Animate|Heavener
-2022|core|Northlane|Obsidian
-2024|core prog|Erra|Cure
-2022|core|Motionless in White|Scoring the End of the World
-2021|core|Ice Nine Kills|The Silver Scream 2: Welcome to Horrorwood
-2022|industrial|Rammstein|Zeit
-2021|industrial thrash|Ministry|Moral Hygiene
-2024|industrial thrash|Ministry|HOPIUMFORTHEMASSES
-2020|industrial core|Code Orange|Underneath
-2023|industrial core|Code Orange|The Above
-2022|industrial sludge|Author & Punisher|Krüller
-2021|industrial groove|Fear Factory|Aggression Continuum
-2020|industrial|Marilyn Manson|We Are Chaos
-2024|industrial|Marilyn Manson|One Assassination Under God - Chapter 1
-2023|industrial|3Teeth|EndEx
-2021|industrial groove|Rob Zombie|The Lunar Injection Kool Aid Eclipse Conspiracy
-2023|industrial sludge|Godflesh|Purge
-2025|industrial prog|Igorrr|Amen
+1970|heavy doom|Black Sabbath|Black Sabbath|826c9743-a3f0-3479-bf06-8df2e140ef1d|1970|1
+1970|heavy doom|Black Sabbath|Paranoid|cc053745-c447-3566-8f27-bed5438c9133|1970|1
+1971|heavy doom|Black Sabbath|Master of Reality|e51e9779-2edc-3b39-959c-299fdb5ed940|1971|1
+1972|heavy doom|Black Sabbath|Vol. 4|8c292627-3459-3852-8ebc-226c12db175d|1972|1
+1973|heavy|Black Sabbath|Sabbath Bloody Sabbath|dd9bd473-0232-3a12-b51e-742de1aca5ca|1973|1
+1972|heavy|Deep Purple|Machine Head|d00243c5-adcf-3018-9aa7-1957d7a5a774|1972|1
+1973|heavy|Budgie|Never Turn Your Back on a Friend|58ea61fb-af46-3af2-88fd-e1743afc8064|1973|1
+1976|heavy|Judas Priest|Sad Wings of Destiny|04b8ba32-4b02-3f06-a533-f9938b70b925|1976|1
+1978|heavy|Judas Priest|Stained Class|c035f09e-430c-3510-9a4d-7cb33dd56ed8|1978|1
+1976|heavy|Rainbow|Rising|66576223-2647-37df-b6c2-746fc35c1a41|1976|1
+1978|heavy|Rainbow|Long Live Rock 'n' Roll|4dff9404-ada8-34e7-98f2-1bc9a61cda05|1978|1
+1979|heavy|Scorpions|Lovedrive|04fdc341-2253-3e8c-96a8-d83ed76ebe1b|1979|1
+1979|heavy|Motörhead|Overkill|c99d9663-dd14-3ba2-9d8c-10c8f8fa569b|1979|1
+1979|heavy|Motörhead|Bomber|973143a1-759e-3b3c-91df-322c5c86b62d|1979|1
+1980|heavy|Iron Maiden|Iron Maiden|88a735ad-1f8a-3f96-b410-7e5058dff7f6|1980|1
+1981|heavy|Iron Maiden|Killers|cf1e9a98-3ea7-33e5-a8b6-8665dd9a206b|1981|1
+1982|heavy|Iron Maiden|The Number of the Beast|4ebfe175-e7ed-34cd-8e91-67c7e4a53579|1982|1
+1983|heavy|Iron Maiden|Piece of Mind|169361b5-af6f-34ca-b8f2-13605a7f9691|1983|1
+1984|heavy|Iron Maiden|Powerslave|60a20bc8-acac-3cbb-99f9-ce458317233a|1984|1
+1986|heavy|Iron Maiden|Somewhere in Time|a5fe4d2d-3aab-3e86-91ad-22a3fe16c4f2|1986|1
+1988|heavy|Iron Maiden|Seventh Son of a Seventh Son|1b0d4fdb-d4ee-308f-9755-ccb7dc31a001|1988|1
+1980|heavy|Judas Priest|British Steel|5bd56af7-2bd6-392e-a815-b39354e3780d|1980|1
+1982|heavy|Judas Priest|Screaming for Vengeance|40f3885e-7158-3154-826d-676f2b79c6fb|1982|1
+1984|heavy|Judas Priest|Defenders of the Faith|a00ff762-f474-39f0-9fa2-b5e24db7fd97|1984|1
+1980|heavy|Motörhead|Ace of Spades|51d51de2-0312-4798-8529-bed2ae2581c6|1980|1
+1980|heavy doom|Black Sabbath|Heaven and Hell|43ac82b5-eceb-3909-a153-3c00ea9c7b9a|1980|1
+1983|heavy|Dio|Holy Diver|4e7b34de-0d87-356a-a3da-b21f769b7d4d|1983|1
+1984|heavy|Dio|The Last in Line|798601d4-f28e-3835-b10c-1a00ecf773b8|1984|1
+1985|heavy|Dio|Sacred Heart|0efb0f16-6d2c-3fe4-b3d5-2fdd08394417|1985|1
+1980|heavy|Ozzy Osbourne|Blizzard of Ozz|1c318024-66cc-32f5-8e06-b06dc511b42c|1980|1
+1981|heavy|Ozzy Osbourne|Diary of a Madman|5e8dc90d-610e-3d85-8884-a1449d74e6cc|1981|1
+1983|heavy|Ozzy Osbourne|Bark at the Moon|de3c9808-9652-35ed-9022-dcc907ae3410|1983|1
+1980|heavy|Saxon|Wheels of Steel|f0556704-20f0-3831-8f7a-aab0855d5865|1980|1
+1980|heavy|Saxon|Strong Arm of the Law|d74496e5-ec54-3799-bd96-5a7bbffcd14d|1980|1
+1981|heavy|Saxon|Denim and Leather|f1bee401-be11-372a-b67d-f10280257970|1981|1
+1982|heavy|Accept|Restless and Wild|4ff7ce7c-43bf-35b3-a543-91ab743c6b07|1982|1
+1983|heavy|Accept|Balls to the Wall|fd693185-db7f-305d-a38e-3ff8caaa0c57|1983|1
+1982|heavy|Scorpions|Blackout|b00fbf7c-ebaf-3ec0-91d6-5eaad124d58f|1982|1
+1984|heavy|W.A.S.P.|W.A.S.P.|af1deb9c-f3c3-3624-9760-2fa791be53c7|1984|1
+1985|heavy|W.A.S.P.|The Last Command|4e15ae79-37e9-3186-9786-f86ce79f2dd8|1985|1
+1980|heavy|Diamond Head|Lightning to the Nations|450d4fe3-826d-3552-8de8-4a068371dd32|1980|1
+1980|heavy|Angel Witch|Angel Witch|52063b2d-ff18-3f2a-80d7-88ba835e17ac|1980|1
+1982|heavy|Tank|Filth Hounds of Hades|c383d25b-e014-3345-8364-406acf295927|1982|1
+1982|heavy|Raven|Wiped Out|c92bacb0-9d92-321b-8046-5e6ab133b318|1982|1
+1983|heavy|Satan|Court in the Act|1cdc2d57-da61-3a7a-b666-b71a22b04c81|1983|1
+1983|heavy|Grim Reaper|See You in Hell|8ee270a1-31aa-3ce5-9d1c-6ff7c07b43e4|1983|1
+1983|heavy black|Mercyful Fate|Melissa|fec621f5-1a4c-3de0-99ee-a70ea75e76c2|1983|1
+1984|heavy black|Mercyful Fate|Don't Break the Oath|170e97b4-c1ff-3225-9bf1-0abc9c073d6a|1984|1
+1986|heavy|King Diamond|Fatal Portrait|e926de4f-0cfc-3199-843a-2dbcfc3f4176|1986|1
+1987|heavy|King Diamond|Abigail|ec2dfd65-cdd8-33c1-8ebc-be36c5a686f7|1987|1
+1984|heavy|Metal Church|Metal Church|ab8f58b0-abbc-3371-8241-d08ff430ba45|1984|1
+1988|heavy power|Riot|Thundersteel|a15d3e84-a798-38a1-8fca-634b36d4b90a|1988|1
+1984|heavy|Omen|Battle Cry|35fd40b1-31f7-3943-ae1a-9bc7328f07e2|1984|1
+1984|heavy doom|Cirith Ungol|King of the Dead|7a9a17bb-ebaa-30cd-b495-7b7d33453c9d|1984|1
+1983|heavy|Manilla Road|Crystal Logic|38d32b32-3c3d-3d77-ad19-b3734534901a|1983|1
+1987|heavy power|Savatage|Hall of the Mountain King|ed2148ea-add9-3893-b6b4-97b7010d8627|1987|1
+1984|heavy prog|Queensrÿche|The Warning|7e43ce5b-aef4-35d0-aeaf-1e5eb4de5f87|1983|1
+1986|heavy prog|Queensrÿche|Rage for Order|71fd859a-c1d6-3ac6-aca8-e3b51b1579c9|1986|1
+1988|heavy prog|Queensrÿche|Operation: Mindcrime|1bdbbbcd-6380-3726-b039-86fe0559f273|1988|1
+1986|heavy prog|Fates Warning|Awaken the Guardian|557e1ff1-9e2d-3f15-a0c2-ab89bb87b86d|1986|1
+1981|black heavy|Venom|Welcome to Hell|3c943530-e44e-3f1a-a847-b3e6d8422c8f|1981|1
+1982|black heavy|Venom|Black Metal|84df033e-49e6-30aa-8331-11e4c0e161b6|1982|1
+1985|power|Helloween|Walls of Jericho|78492dde-c7f7-31cb-a1c6-5d00672748ad|1985|1
+1987|power|Helloween|Keeper of the Seven Keys, Part I|a2b9a7ac-066f-3fc7-a740-725c4fb5f070|1988|1
+1988|power|Helloween|Keeper of the Seven Keys, Part II|a2b9a7ac-066f-3fc7-a740-725c4fb5f070|1988|1
+1984|power heavy|Manowar|Hail to England|3920f3dd-1079-3981-ad81-a70a5cef6a07|1984|1
+1984|power heavy|Manowar|Sign of the Hammer|c82db0df-6cef-3f4e-8ccf-16e000821893|1984|1
+1988|power heavy|Manowar|Kings of Metal|8f4ab01b-de0c-37ec-9d1a-5c2adf9977d7|1988|1
+1988|power|Blind Guardian|Battalions of Fear|2a125b51-bbac-3617-99fc-4c6075b26e61|1988|1
+1983|thrash|Metallica|Kill 'Em All|f44f4f73-a714-31a1-a4b8-bfcaaf311f50|1983|1
+1984|thrash|Metallica|Ride the Lightning|0da580f2-6768-498f-af9d-2becaddf15e0|1984|1
+1986|thrash|Metallica|Master of Puppets|3d00fb45-f8ab-3436-a8e1-b4bfc4d66913|1986|1
+1988|thrash|Metallica|...And Justice for All|67553e23-8dad-3792-b6f2-8fedd5650ff3|1988|1
+1983|thrash|Slayer|Show No Mercy|d8070bff-c9e8-30fe-8e90-6313bb1586d0|1983|1
+1985|thrash|Slayer|Hell Awaits|f3000d1b-935c-3872-a1c5-4c5aae663b33|1985|1
+1986|thrash|Slayer|Reign in Blood|dbf1b3c0-1efb-4e5f-9fe1-4c42b144aa24|1986|1
+1988|thrash|Slayer|South of Heaven|74292121-e345-3f10-85ae-013f4e5a8cae|1988|1
+1985|thrash|Megadeth|Killing Is My Business... and Business Is Good!|5410e871-d248-384b-ad73-0cb23a543cef|1985|1
+1986|thrash|Megadeth|Peace Sells... but Who's Buying?|4eea6bcc-3226-3c0d-a71d-af682a0a1dd8|1986|1
+1988|thrash|Megadeth|So Far, So Good... So What!|0e4f3e50-73c5-3a57-871a-5264bc210989|1988|1
+1985|thrash|Anthrax|Spreading the Disease|5ebc6b4f-6b03-3202-86ac-a999408143fe|1985|1
+1987|thrash|Anthrax|Among the Living|413bc69f-9391-3fe3-802b-5bf4922f6066|1987|1
+1987|thrash|Testament|The Legacy|fc164cde-a62d-3011-9ac8-b969a92b83cf|1987|1
+1988|thrash|Testament|The New Order|2396c29f-2a8a-40c7-bce4-4c8dec6758b0|1988|1
+1989|thrash|Testament|Practice What You Preach|043035dd-8e0d-342e-940f-54b037414857|1989|1
+1985|thrash|Exodus|Bonded by Blood|08e23bf4-ab01-3d24-9a71-bfcbc1567fe3|1985|1
+1989|thrash|Exodus|Fabulous Disaster|6e19355d-5837-328e-a914-72ca34bc4296|1989|1
+1986|thrash|Kreator|Pleasure to Kill|8dcae7a3-9e87-3089-90fc-56baffb245eb|1986|1
+1989|thrash|Kreator|Extreme Aggression|6b51dbf6-ef23-394e-85e2-5d3beabd23c0|1989|1
+1987|thrash|Sodom|Persecution Mania|d2d3f0ec-89f5-3fe0-98a6-9c033522a791|1987|1
+1989|thrash|Sodom|Agent Orange|bfdb97ce-02a2-31de-8a95-43664d771d4c|1989|1
+1985|thrash|Destruction|Infernal Overkill|4f8d655b-92ad-3977-a89d-349f2d267880|1985|1
+1986|thrash|Destruction|Eternal Devastation|2fbd72b3-1dc5-3c84-8e59-1f899768b64f|1986|1
+1987|thrash|Overkill|Taking Over|7a3c9635-b831-3f8c-b881-21357fdcf447|1987|1
+1986|thrash|Dark Angel|Darkness Descends|cfc3b110-37c4-30f3-852d-78afb438f512|1986|1
+1986|thrash|Nuclear Assault|Game Over|12925f90-10a4-4520-82b5-e990da36bf3a|1986|1
+1987|thrash|Sacrifice|Forward to Termination|be4e1114-8a99-3193-8588-6a02ab5218c9|1987|1
+1985|thrash|Razor|Evil Invaders|8ce4e98f-50bf-3916-8ae1-1122be2f8eb2|1985|1
+1989|thrash|Annihilator|Alice in Hell|d89f908d-3800-358c-9545-7e5bc33d4530|1989|1
+1988|thrash|Vio-lence|Eternal Nightmare|c79f16ea-f90c-3901-8f11-66dbc7a5058d|1988|1
+1987|thrash|Death Angel|The Ultra-Violence|acdd9500-0d70-325a-84cc-5a1c1a7931e6|1987|1
+1987|thrash|Sacred Reich|Ignorance|7308f234-adff-3b4f-825d-965fa20df631|1987|1
+1987|thrash prog|Voivod|Killing Technology|fb0834d5-e8c9-3ae0-b6a2-24510023af01|1987|1
+1988|thrash prog|Voivod|Dimension Hatröss|5198a92a-d7b9-347c-927f-4dea160095b4|1988|1
+1989|thrash prog|Voivod|Nothingface|0cac78a5-2fd2-368a-b783-932eee29a1a4|1989|1
+1989|thrash prog|Coroner|No More Color|d94f4fdc-a575-3eba-b767-10ddfd740bb8|1989|1
+1985|thrash death|Possessed|Seven Churches|2c3217e0-2d81-3dcd-9560-34f7aacefef5|1985|1
+1987|thrash death|Sepultura|Schizophrenia|3531f7dd-5748-3f09-9549-47ae6f53b97c|1987|1
+1989|thrash death|Sepultura|Beneath the Remains|6d9c2a90-603d-34b5-b855-dd20e61971b7|1989|1
+1987|death|Death|Scream Bloody Gore|4b2378ca-9617-3b4a-bac3-dcc23a0467bf|1987|1
+1988|death|Death|Leprosy|e4f11dc7-ed0c-4fb2-bdf7-b1a6240bd167|1988|1
+1989|death|Morbid Angel|Altars of Madness|e5be441e-53ec-376a-b261-426e8f06e144|1989|1
+1989|death|Obituary|Slowly We Rot|615595ba-3435-36c6-8a4b-545c6403cfb6|1989|1
+1989|death|Carcass|Symphonies of Sickness|ac9c6c2f-7e39-32a6-aa79-491761cf8494|1989|1
+1987|death|Napalm Death|Scum|28fde873-9dcd-35f7-9521-8d446ee2753b|1987|1
+1989|death|Autopsy|Severed Survival|d838cbc8-2ae7-3d4e-9fca-e4baab207df8|1989|1
+1987|black|Bathory|Under the Sign of the Black Mark|1c00d633-95b2-3dc4-b57b-91df5d8d476f|1987|1
+1988|black|Bathory|Blood Fire Death|ea110d40-17d2-39d9-8c12-2eb5257b8d11|1988|1
+1985|black thrash|Celtic Frost|To Mega Therion|f2f954cb-3083-3261-bef1-e97bfe80987a|1985|1
+1987|black thrash|Celtic Frost|Into the Pandemonium|08a0dc39-651d-33c9-a614-fe078f5392e8|1987|1
+1986|doom|Candlemass|Epicus Doomicus Metallicus|7d42c10a-5cc7-3af4-89c6-5234e452e6d0|1986|1
+1987|doom|Candlemass|Nightfall|00c46fc1-c5a8-377c-867c-d4b6b223d150|1987|1
+1986|doom|Saint Vitus|Born Too Late|d3e57636-7a78-3192-aa29-63c9c517b1a4|1986|1
+1984|doom|Trouble|Psalm 9|8694d428-b1de-3037-b023-21b7c110370c|1984|1
+1985|doom|Pentagram|Relentless|9c415e00-1b88-43df-847c-1e0e4f3c02f0|1984|1
+1988|industrial|Ministry|The Land of Rape and Honey|7a18b986-afcc-359c-add1-7aa3a79104a2|1988|1
+1989|industrial|Ministry|The Mind Is a Terrible Thing to Taste|f9ae3b6b-ee68-358f-9e75-d13b59cdbb11|1989|1
+1989|industrial sludge|Godflesh|Streetcleaner|2c784b05-145c-43f2-aca2-7ce3f4e6daf5|1989|1
+1985|prog|Watchtower|Energetic Disassembly|5b7eca32-9c6c-37d4-81ac-d07ef41270bd|1985|1
+1990|thrash|Slayer|Seasons in the Abyss|27e49c6a-c0c6-3e76-b020-e48f4204ac6a|1990|1
+1990|thrash|Megadeth|Rust in Peace|19e7c9f3-7c4c-3a56-ba50-4156b39f76ca|1990|1
+1992|thrash heavy|Megadeth|Countdown to Extinction|04785b90-87cb-3d5d-a9a9-7f465e327bb4|1992|1
+1990|thrash|Anthrax|Persistence of Time|ea25c463-c8e7-3f2b-8ec9-d883ed227e25|1990|1
+1990|thrash|Kreator|Coma of Souls|60ded5ee-2661-302b-808a-fcc176e1d5b1|1990|1
+1990|thrash|Forbidden|Twisted Into Form|596b81fe-2d60-3237-b818-4152aed0bcc1|1990|1
+1990|thrash|Testament|Souls of Black|2a05ffff-9ddd-3db8-be1f-29b363a1ff36|1990|1
+1991|heavy|Metallica|Metallica|e8f70201-8899-3f0c-9e07-5d6495bc8046|1991|1
+1991|thrash death|Sepultura|Arise|6d9ffabb-233a-3cc1-9ac3-d2a8e4c99cdd|1991|1
+1993|groove thrash|Sepultura|Chaos A.D.|b53fdd53-f70c-3580-ad92-04f7fe77b254|1993|1
+1996|groove nu|Sepultura|Roots|f625cd30-9427-360b-b63d-e294d23b1980|1996|1
+1990|death|Death|Spiritual Healing|ecc036f3-d7c6-3594-a19f-e6ca76c15f29|1990|1
+1991|death prog|Death|Human|6346903b-4480-3b0f-adef-90fe0b338509|1991|1
+1993|death prog|Death|Individual Thought Patterns|94554b6c-2d9e-3174-89f0-94aec0b285e9|1993|1
+1995|death prog|Death|Symbolic|bd675025-abcb-3536-9e19-ba3204c0183d|1995|1
+1998|death prog|Death|The Sound of Perseverance|0cd38da9-90a9-3e0b-bef6-e70036c8a619|1998|1
+1991|death|Morbid Angel|Blessed Are the Sick|cae89c54-820c-3b2f-b211-bb5e29a079ea|1991|1
+1993|death|Morbid Angel|Covenant|2ba9247a-16f2-3410-b4f4-f704d133fcfb|1993|1
+1995|death|Morbid Angel|Domination|16b66d60-50ee-3abf-aaac-05abb4237059|1995|1
+1990|death|Obituary|Cause of Death|41418c5f-ccd5-313f-92d0-c86c149571f5|1990|1
+1992|death|Obituary|The End Complete|96991a22-b591-3694-885f-a79fcf87e937|1992|1
+1991|death|Carcass|Necroticism: Descanting the Insalubrious|8fb7386e-efb6-3c55-8ee1-c80d14267080|1991|1
+1993|death|Carcass|Heartwork|0c151ec8-7252-33b8-bef9-a889872ce10d|1993|1
+1991|death doom|Autopsy|Mental Funeral|c2b35203-b317-363a-99e8-176790b4f764|1991|1
+1990|death|Deicide|Deicide|a003a8b2-9926-311e-9356-3757e086b2fb|1990|1
+1992|death|Deicide|Legion|3d95a372-2f13-3ef6-97bc-6aad955ce502|1992|1
+1990|death|Cannibal Corpse|Eaten Back to Life|96e7f3d4-1717-37db-830a-773f9104d071|1990|1
+1991|death|Cannibal Corpse|Butchered at Birth|846e5976-9b9b-3e4f-a96b-f15c2585b725|1991|1
+1992|death|Cannibal Corpse|Tomb of the Mutilated|c996f842-dd0d-30e8-af7b-53137dac2209|1992|1
+1994|death|Cannibal Corpse|The Bleeding|cf8a7d5b-5ff9-3fd8-94b6-4e00b55523de|1994|1
+1990|death|Entombed|Left Hand Path|3f5ce50c-78a7-30f8-8a03-34b3d7aea9b9|1990|1
+1991|death|Entombed|Clandestine|9044d3bc-862d-31e6-8c71-7e9046cb6aa7|1991|1
+1991|death|Dismember|Like an Ever Flowing Stream|d2f1445f-cbc1-332f-a2ae-29136f0cf79c|1991|1
+1991|death|Suffocation|Effigy of the Forgotten|af11f424-5f79-355d-80ab-0ad4fc0b4c0b|1991|1
+1995|death|Suffocation|Pierced from Within|01dd1fe4-ba61-38ee-afb1-96fcc7d4bee0|1995|1
+1991|death prog|Atheist|Unquestionable Presence|7be973f8-991d-35ce-91ff-e2c525fe0d9c|1991|1
+1993|death prog|Cynic|Focus|dbe96e71-c9c0-3ddf-b3f1-1646b73dca4a|1993|1
+1991|death|Pestilence|Testimony of the Ancients|7e306d67-1542-3129-8965-cbc6f2e634f1|1991|1
+1995|death|At the Gates|Slaughter of the Soul|675e453b-43c5-3c05-9ac8-dc526471e583|1995|1
+1996|death|In Flames|The Jester Race|1e987cd2-c9db-334c-9229-6dbe63f67c41|1996|1
+1995|death|Dark Tranquillity|The Gallery|06a50231-c772-3766-8f20-54dd144a2421|1995|1
+1994|death doom|Amorphis|Tales from the Thousand Lakes|58330435-22c9-3bd4-9d6c-697dca134724|1994|1
+1998|death prog|Gorguts|Obscura|eb122d7a-13d6-3bd8-a3f1-0ae8ffb753e1|1998|1
+1995|death prog|Opeth|Orchid|1e8e4ce8-f334-3ec7-af9a-d7babbdb2fd2|1995|1
+1998|death prog|Opeth|My Arms, Your Hearse|da8433e6-a5df-3d6b-bf27-4aa069e8adee|1998|1
+1999|death prog|Opeth|Still Life|b2896060-c317-32d7-9224-d530ce503871|1999|1
+1999|death power|Children of Bodom|Hatebreeder|4ab5cf84-2080-3375-b9c5-e125adf9855c|1999|1
+1994|black|Mayhem|De Mysteriis Dom Sathanas|982634e8-cd4d-3f7c-9f90-9b6dea315589|1994|1
+1992|black|Darkthrone|A Blaze in the Northern Sky|3ab57384-506c-33ff-9ecc-e5a6134e17bd|1992|1
+1993|black|Darkthrone|Under a Funeral Moon|f388f4e5-e63d-3659-897e-55165eed4df5|1993|1
+1994|black|Darkthrone|Transilvanian Hunger|bc9a4ab3-2ce0-3a49-b48f-3742169d0636|1994|1
+1994|black|Emperor|In the Nightside Eclipse|e8170089-f81a-3103-bb22-e6f43c4fcaf9|1994|1
+1997|black|Emperor|Anthems to the Welkin at Dusk|f55aa89a-d660-3a93-a586-e6455a2f7226|1997|1
+1993|black|Immortal|Pure Holocaust|07889b63-d81c-3a04-a4de-287e25c34a28|1993|1
+1995|black|Immortal|Battles in the North|c667ccdf-4ea9-302a-8987-e9eaa5cfcbb0|1995|1
+1999|black|Immortal|At the Heart of Winter|168fb6b5-7304-35d4-896a-425e6b728184|1999|1
+1994|black|Burzum|Hvis lyset tar oss|135bd4e1-7453-300a-b994-d939d84732b1|1994|1
+1996|black|Burzum|Filosofem|c2841928-501f-37f7-a59e-cb1629471258|1996|1
+1996|black|Satyricon|Nemesis Divina|77db732c-63e8-3107-9188-39efebd89efb|1996|1
+1995|black death|Dissection|Storm of the Light's Bane|e6cebdb0-4116-39d1-a944-2138b8a7af7c|1995|1
+1997|black power|Dimmu Borgir|Enthrone Darkness Triumphant|0260d5d0-a929-353b-8052-9c4f8d2ca7cd|1997|1
+1996|black|Cradle of Filth|Dusk... and Her Embrace|9e62aa69-ea65-3670-9c79-83ba0e01e783|1996|1
+1999|black|Marduk|Panzer Division Marduk|6e666262-5368-3956-b451-8549ffc50918|1999|1
+1995|black|Ulver|Bergtatt|c9e7b2fc-ec8a-3450-a22f-a79ddd67bd47|1995|1
+1991|doom|Cathedral|Forest of Equilibrium|fed5be55-20f2-39e3-bccc-708e91d4277a|1991|1
+1991|doom|Paradise Lost|Gothic|2f3ebae3-fa82-3e19-8cfe-8a15a83d3f7d|1991|1
+1993|doom|Paradise Lost|Icon|549cb4dc-bccc-3576-9b04-cba691eb2c59|1993|1
+1993|doom|My Dying Bride|Turn Loose the Swans|7f99d95b-4adf-3ac8-a0f0-66f00a37dd73|1993|1
+1995|doom|Anathema|The Silent Enigma|104e5fe9-7f6e-3d41-8efb-4cf40713a9a1|1995|1
+1997|doom sludge|Electric Wizard|Come My Fanatics....|3443d8ea-6d7d-3d9e-b613-f9df853438c4|1997|1
+1992|doom sludge|Sleep|Sleep's Holy Mountain|8fef03e2-e48d-3d09-a324-e39056eb2575|1992|1
+1993|doom|Type O Negative|Bloody Kisses|8aefda0e-a2c2-3d02-b9da-954e3e258681|1993|1
+1992|doom|Candlemass|Chapter VI|8a0fd9c2-15b6-398a-b873-fc11ab5ab6f1|1992|1
+1994|doom|Tiamat|Wildhoney|f743de25-5811-3f43-9a2e-6acead1892fe|1994|1
+1996|doom death|Katatonia|Brave Murder Day|9a86748d-33f5-37f8-a9f9-8be806d0ed92|1996|1
+1990|doom death|Winter|Into Darkness|2b58393b-25b7-3707-97d7-0066193de2b3|1990|1
+1993|sludge|Eyehategod|Take as Needed for Pain|2b3b9d3a-af4d-3c29-a46f-3179cccf0f7f|1993|1
+1996|sludge|Eyehategod|Dopesick|dc119025-5365-3999-a60b-88f551ab6b94|1996|1
+1993|sludge|Crowbar|Crowbar|16371d97-d823-373b-b82e-b80b9b40f5d5|1993|1
+1995|sludge groove|Down|NOLA|e08d1d50-f2f3-3b30-8ddc-d1ac4946f82c|1995|1
+1992|sludge|Kyuss|Blues for the Red Sun|816f2753-e709-3b10-ad93-e4c1af7aea6c|1992|1
+1994|sludge|Kyuss|Welcome to Sky Valley|eecc24d6-b4ba-39a9-818f-a6ec14a9a04f|1994|1
+1993|sludge|Melvins|Houdini|76ce6e14-2938-3653-8fd9-e1f31a33deb2|1993|1
+1994|sludge|Acid Bath|When the Kite String Pops|8df242f8-232c-3235-91ec-d682786aba50|1994|1
+1996|sludge|Neurosis|Through Silver in Blood|fb27225e-e66e-37ea-bc2c-9b7352f1e81f|1996|1
+1999|sludge|Neurosis|Times of Grace|d59a4f3e-b304-3b47-8784-7a7a4ea9922d|1999|1
+1994|sludge heavy|Corrosion of Conformity|Deliverance|6539b109-f104-3ddb-80d6-4af2d0ed9d8e|1994|1
+1995|sludge|Monster Magnet|Dopes to Infinity|90162d23-76c0-3233-8c1e-a3949b222510|1995|1
+1997|sludge|Fu Manchu|The Action Is Go|fa028de2-1d6a-3898-bcaf-ebdef860d6f9|1997|1
+1990|groove thrash|Pantera|Cowboys From Hell|a0398241-a842-3593-83b4-a1aa1df23328|1990|1
+1992|groove|Pantera|Vulgar Display of Power|814e0b20-6884-31c5-9d99-d215f048cfd6|1992|1
+1994|groove|Pantera|Far Beyond Driven|60b55a8c-fe68-3397-91a3-7444cab57d7b|1994|1
+1996|groove|Pantera|The Great Southern Trendkill|75a041d3-1fa8-3082-bf4a-ad65416c4624|1996|1
+1994|groove thrash|Machine Head|Burn My Eyes|79ea7e92-e6c3-35ae-883a-27edbdcd7133|1994|1
+1990|groove thrash|Exhorder|Slaughter in the Vatican|054a7353-e254-3e89-bd38-8b44cce32694|1990|1
+1992|groove industrial|White Zombie|La Sexorcisto: Devil Music, Vol. 1|1bdbee32-2410-304e-92d5-463e8e89d639|1992|1
+1995|groove industrial|White Zombie|Astro-Creep: 2000|0fca3ae6-d3b4-312a-8258-6be77fe7d399|1995|1
+1994|groove industrial|Prong|Cleansing|95b61116-e9a5-3fe8-9249-d6a78f1f4964|1994|1
+1992|groove core|Biohazard|Urban Discipline|746cb8d2-7b66-3251-9057-89c03ff1480e|1992|1
+1994|nu|Korn|Korn|aa08a002-2777-39cf-a554-e0988fc68030|1994|1
+1996|nu|Korn|Life Is Peachy|e958aac9-4f24-3077-96de-117ec44d4dbb|1996|1
+1998|nu|Korn|Follow the Leader|e47ad139-89f6-39e8-aa84-fe84c45aeb7d|1998|1
+1999|nu|Korn|Issues|c7497ce4-c746-3a75-946e-daa8ab117c47|1999|1
+1995|nu|Deftones|Adrenaline|0b4ea447-444c-34ba-ba87-96496f2e15b8|1995|1
+1997|nu|Deftones|Around the Fur|6f935b80-160f-3787-97d6-a4ce342cf8c5|1997|1
+1997|nu|Limp Bizkit|Three Dollar Bill, Yall$|37e85bb0-e792-3a19-a3ca-593e2c4c026a|1997|1
+1999|nu|Limp Bizkit|Significant Other|2234d0c4-5ee5-3388-8baa-49bcb23ebbbd|1999|1
+1999|nu|Slipknot|Slipknot|5140eef4-5b5d-309c-a3aa-5c5da107b1da|1999|1
+1998|nu|System of a Down|System of a Down|97f37409-b91a-3495-8e70-56fd9f7658c2|1998|1
+1997|nu|Coal Chamber|Coal Chamber|4b9083d3-28b4-32b8-8b64-d69dd746c192|1997|1
+1999|nu industrial|Static-X|Wisconsin Death Trip|a4f77289-1d1c-3e28-8bb1-e14f8160d705|1999|1
+1997|nu|Sevendust|Sevendust|07f19c84-63e9-3ccc-8cd5-d9c2d9a94215|1997|1
+1998|nu groove|Soulfly|Soulfly|dd3f5470-2653-3b72-b1d3-b99195a667c5|1998|1
+1990|power|Blind Guardian|Tales from the Twilight World|0519b1bf-c443-3110-8fb0-6fbbf8f3862b|1990|1
+1992|power|Blind Guardian|Somewhere Far Beyond|b62ade5d-51ca-366c-baf6-d1ce050447e6|1992|1
+1995|power|Blind Guardian|Imaginations From the Other Side|e0fb41f5-17b2-32e0-ad8c-de40f2a6ed4e|1995|1
+1998|power|Blind Guardian|Nightfall in Middle-Earth|3a5d9bb8-8e19-379d-b294-ee8fcf743f77|1998|1
+1995|power|Gamma Ray|Land of the Free|04bb9023-46de-36fd-9d44-f22edafc7341|1995|1
+1997|power|Stratovarius|Visions|ce100933-bf0d-386f-b358-8be5d90559d1|1997|1
+1997|power|HammerFall|Glory to the Brave|b7784060-0385-3db0-915b-d2e799138248|1997|1
+1998|power|Rhapsody|Symphony of Enchanted Lands|47966c58-288a-33fd-b161-b4683afd318a|1998|1
+1996|power thrash|Iced Earth|The Dark Saga|d85156b7-a5fa-340b-81c7-ee3a61016d6f|1996|1
+1998|power thrash|Iced Earth|Something Wicked This Way Comes|66bbf7d4-816d-3a00-be77-22f22c81350d|1998|1
+1994|power|Helloween|Master of the Rings|bb111890-b3ff-3e91-8ad6-f61d82a8b7cc|1994|1
+1996|power|Helloween|The Time of the Oath|dbc58aba-e803-33ab-a350-93c737c249e9|1996|1
+1998|power|Nightwish|Oceanborn|330d46a3-bd4e-3f5a-83c1-ec2b47f9a8d3|1998|1
+1993|power|Angra|Angels Cry|10d43270-60cb-3779-9fb9-e431d2da5e5a|1993|1
+1999|power|Sonata Arctica|Ecliptica|6797e784-9d16-370b-924d-9b77b54e6dee|1999|1
+1992|prog|Dream Theater|Images and Words|ee30c026-b4f4-3e2a-94cf-7e586f1ccae0|1992|1
+1994|prog|Dream Theater|Awake|676ab2e6-17e6-32e8-9060-191a931ea7b2|1994|1
+1999|prog|Dream Theater|Metropolis Pt. 2: Scenes From a Memory|d8ae7015-d78b-307e-bcde-5b0dd1e61528|1999|1
+1990|prog heavy|Queensrÿche|Empire|fd4bb9f4-c263-392a-8d71-3e96e26880d7|1990|1
+1991|prog|Fates Warning|Parallels|8968e825-e679-3d6c-b5d5-36b372e3de48|1991|1
+1995|prog|Meshuggah|Destroy Erase Improve|34477fa0-2ee6-4c26-8eba-d3d5e0908811|1995|1
+1998|prog|Meshuggah|Chaosphere|460c2238-8fa3-37c1-9f81-cac6ff902bbc|1998|1
+1993|prog|Tool|Undertow|b067cde8-f3a7-394a-b8e7-640ca744f2e4|1993|1
+1996|prog|Tool|Ænima|ef1e8130-dd5f-336a-85fa-4936a47342bd|1996|1
+1997|prog|Devin Townsend|Ocean Machine: Biomech|1e7f3e84-474a-3851-8ba0-105ca22d5d19|1997|1
+1997|prog power|Symphony X|The Divine Wings of Tragedy|e4def96d-5819-38f6-ad02-2ed1cf407f7a|1996|1
+1996|industrial sludge|Ministry|Filth Pig|d6829c22-6ea9-330f-9ae6-414a05c62e2d|1996|1
+1994|industrial|Nine Inch Nails|The Downward Spiral|7c4cab8d-dead-3870-b501-93c90fd0a580|1994|1
+1992|industrial|Godflesh|Pure|a72fa682-8948-3efb-b8e9-59756306fac4|1992|1
+1995|industrial groove|Fear Factory|Demanufacture|bb54def1-20ed-3970-a51e-32f03be5a397|1995|1
+1998|industrial groove|Fear Factory|Obsolete|c24fea88-b29e-307f-b453-09870cb9322f|1998|1
+1995|industrial|Rammstein|Herzeleid|806eb9e1-06c6-385e-bf04-f3c5e2b4a6be|1995|1
+1997|industrial|Rammstein|Sehnsucht|2a323740-b615-35bc-9f58-1d2e6a5d9289|1997|1
+1996|industrial|Marilyn Manson|Antichrist Superstar|6cb17389-101a-3f0a-8864-bea548465406|1996|1
+1995|industrial|KMFDM|Nihil|f8a4b18f-7cdb-3c80-8158-b758fcbf59a0|1995|1
+1997|industrial|Strapping Young Lad|City|2d447add-9c8c-3c87-ba5c-0c4abebdbb5b|1996|1
+1995|core|Earth Crisis|Destroy the Machines|e5de37fc-2c3b-375e-a7ec-562eea15bb58|1995|1
+1997|core|Hatebreed|Satisfaction Is the Death of Desire|939af3d8-1687-34be-9805-e371b93bb38e|1997|1
+1999|core|Botch|We Are the Romans|3984e26f-6f28-3d27-8b9d-06441e9db67f|1999|1
+1996|core|Integrity|Humanity Is the Devil|1f6670af-7abe-3547-ad4e-1465326b37bd|1996|1
+1999|core prog|The Dillinger Escape Plan|Calculating Infinity|3db16ade-a4ad-3db8-a7b3-943a9c97b6b5|1999|1
+2005|thrash|Kreator|Enemy of God|36c13350-7643-3373-8aa0-b025bf6e7e0e|2005|1
+2009|thrash|Kreator|Hordes of Chaos|c59506a5-e829-36ac-a926-fa215ccc8d5a|2009|1
+2008|thrash|Testament|The Formation of Damnation|c5f99365-b948-3f06-8ec9-57f414825ccc|2008|1
+2004|thrash|Megadeth|The System Has Failed|97ae834d-8b50-3068-bf38-807d94f32dd5|2004|1
+2009|thrash|Megadeth|Endgame|e165f024-3fab-4002-aad9-18da9c515d2a|2009|1
+2006|thrash|Slayer|Christ Illusion|fad96cf2-38e1-3600-97f1-df3bab2ede0a|2006|1
+2009|thrash|Slayer|World Painted Blood|1722d206-eba4-426e-8977-599057ccdbc8|2009|1
+2008|thrash|Metallica|Death Magnetic|5c8a25bf-4764-3cce-8f37-30af79d3b101|2008|1
+2005|thrash|Municipal Waste|Hazardous Mutation|7b7d32ae-8f11-3a50-8588-251ee1482f6c|2005|1
+2007|thrash|Municipal Waste|The Art of Partying|9c0897a5-fccf-4971-abe5-d9f45a5ae54b|2007|1
+2009|thrash|Havok|Burn|5e9d181a-383c-4c41-90c6-a8869e1a7926|2009|1
+2007|thrash|Evile|Enter the Grave|638c87ee-4ca1-3516-90b7-dfa3b2eac0e3|2007|1
+2004|thrash|Exodus|Tempo of the Damned|09fb5a8a-db64-3137-9905-709dc0bc3a00|2004|1
+2008|thrash|Toxic Holocaust|An Overdose of Death...|1610b614-d485-3993-86e5-6fc6ac5738e5|2008|1
+2008|thrash|Warbringer|War Without End|68e66493-4dd4-3584-95dd-1d5536ecae77|2008|1
+2002|death|Nile|In Their Darkened Shrines|9bb1ef8d-96c1-34a2-8985-2e659213269d|2002|1
+2005|death|Nile|Annihilation of the Wicked|d317bf1a-0f73-3464-bce4-410f303a1691|2005|1
+2004|death black|Behemoth|Demigod|177cb11b-b4da-3ecb-8909-f83f23469540|2004|1
+2007|death black|Behemoth|The Apostasy|ca55d763-03c5-32de-b5f4-77bdabdd3062|2007|1
+2009|death black|Behemoth|Evangelion|0b3775d7-c61f-4ffb-9dcb-524cccac657a|2009|1
+2001|death prog|Opeth|Blackwater Park|1f4a9f6f-9621-3e46-977d-8503e8386768|2001|1
+2005|death prog|Opeth|Ghost Reveries|00f78b7d-bd0a-356a-aec4-925e529023f8|2005|1
+2008|death prog|Opeth|Watershed|4e94deb3-26df-3376-a55d-297e8275a518|2008|1
+2002|death|Amon Amarth|Versus the World|55177ec2-c278-3e83-bfb1-c03b63ff724b|2002|1
+2006|death|Amon Amarth|With Oden on Our Side|6f6d289e-cd5b-3408-9d91-81da47a88ef0|2006|1
+2008|death|Amon Amarth|Twilight of the Thunder God|9a6f9e35-d05f-3f2b-b2b9-af7f8e619aca|2008|1
+2000|death|In Flames|Clayman|088345b2-2604-344d-bf53-0fc1628629b8|2000|1
+2006|death|In Flames|Come Clarity|3f42bf96-37bf-3708-be5a-448bc667d266|2006|1
+2000|death power|Children of Bodom|Follow the Reaper|d7326eb6-c9a6-36d6-8657-492f211a8709|2000|1
+2003|death power|Children of Bodom|Hate Crew Deathroll|cb30f09c-a736-376f-9445-cf5886f34fea|2003|1
+2002|death|Hate Eternal|King of All Kings|ce503dbb-6649-3e11-ba46-22597226e8af|2002|1
+2004|death prog|Necrophagist|Epitaph|f8432d63-411b-36a8-94f4-01c7bf11bcab|2004|1
+2006|death|Decapitated|Organic Hallucinosis|bcd574cd-0169-3a72-b18c-54cd911db655|2006|1
+2006|death|Cannibal Corpse|Kill|0ec40692-3e74-375a-abd4-e4ad8d6eb3f9|2006|1
+2007|death|The Black Dahlia Murder|Nocturnal|0c69ca39-7d62-37d3-b74e-2b7e95cd2f01|2007|1
+2002|death|Bloodbath|Resurrection Through Carnage|89a86a65-4326-3bf6-8d8d-feb1bfe5e93e|2002|1
+2005|death prog groove|Gojira|From Mars to Sirius|c64e38e7-ea8d-3cda-ba62-1f4b9f899419|2005|1
+2008|death prog groove|Gojira|The Way of All Flesh|3f702793-d03a-3eff-9870-4759bda52e0f|2008|1
+2002|death|Dark Tranquillity|Damage Done|ce727cb4-d95a-3316-b416-97faab82b3be|2002|1
+2009|death prog|Obscura|Cosmogenesis|e63dca4c-5425-3fad-bb63-bb57689adaf2|2009|1
+2007|black|Watain|Sworn to the Dark|384dd6f6-9d96-3929-95bd-966cc18a2431|2007|1
+2001|black|Emperor|Prometheus: The Discipline of Fire & Demise|aa881868-5718-3879-b198-df04ee1b3ef8|2001|1
+2003|black|Dimmu Borgir|Death Cult Armageddon|5b3e13ef-bcfa-3aa9-bde4-aeea020a00a6|2003|1
+2004|black|Deathspell Omega|Si monumentum requires, circumspice|e86d6657-80da-3d4d-8fe0-dc7c67c368fd|2004|1
+2007|black|Deathspell Omega|Fas – Ite, Maledicti, in Ignem Aeternum|2cf2bf50-6b64-31b8-9e2f-ef3a74521844|2007|1
+2007|black|Wolves in the Throne Room|Two Hunters|e7a777cf-7def-3a3a-b0e0-913fb4109e37|2007|1
+2004|black|Leviathan|Tentacles of Whorror|67296f15-99f7-3546-9bc4-36f74543bc18|2004|1
+2008|black|Nachtmystium|Assassins: Black Meddle, Part 1|856082b4-baf4-3c78-b6dc-25b2904c1b68|2008|1
+2006|black|Satyricon|Now, Diabolical|6f452072-bde7-34a9-96cf-7931f4a2eba2|2006|1
+2006|black|Darkthrone|The Cult Is Alive|223bb067-927c-364b-9c61-32d52854a83c|2006|1
+2004|black|Marduk|Plague Angel|7b53f544-3c16-3029-bb86-1335584e4d53|2004|1
+2004|black|Drudkh|Autumn Aurora|78d224ec-7abc-37a9-975e-76e6c70c66a0|2004|1
+2002|black doom|Agalloch|The Mantle|eb035963-5a91-3e7e-b54e-186e4cd1234a|2002|1
+2007|black|Alcest|Souvenirs d'un autre monde|bd1d028d-fa98-3fe6-b61c-18a0a990cb7e|2007|1
+2005|black|1349|Hellfire|fad5a9a8-798e-3e24-9500-39602845d92a|2005|1
+2002|black|Immortal|Sons of Northern Darkness|a5c76178-1ba2-31ed-a8a1-00ce70751b2e|2002|1
+2000|doom sludge|Electric Wizard|Dopethrone|5ebf4f0a-61ba-3829-9d0c-0a0e5ad8897e|2000|1
+2007|doom|Electric Wizard|Witchcult Today|20a30ada-8b1e-3490-9b7f-c4ee3694a530|2007|1
+2005|doom|Candlemass|Candlemass|1f87d564-ebf2-36f2-93ae-d86c5e69ad7f|2005|1
+2007|doom|Candlemass|King of the Grey Islands|c46a068d-bbd6-3846-b0c5-3c870d982550|2007|1
+2006|doom|Warning|Watching From a Distance|326772ef-8657-341a-be34-9e9f4a3ccc0d|2006|1
+2002|doom|Reverend Bizarre|In the Rectory of the Bizarre Reverend|b44c32ad-bb4e-36b5-beef-431423a62232|2002|1
+2005|doom death|Swallow the Sun|Ghosts of Loss|b8a8d489-e271-3456-9f4a-aca86311022a|2005|1
+2006|doom|Ahab|The Call of the Wretched Sea|6d612852-f32b-3954-ba55-1a6b6dda905b|2006|1
+2003|doom|Type O Negative|Life Is Killing Me|7f393d4b-bdbc-3b98-96cc-d52addd866d9|2003|1
+2005|doom|Sunn O)))|Black One|5cf7cf40-d44c-3393-923e-ad399170d76d|2005|1
+2006|doom|Katatonia|The Great Cold Distance|96f8751d-d60c-305e-921b-b75e339d9194|2006|1
+2003|doom sludge|Sleep|Dopesmoker|481b2458-b722-47af-88fd-80e9496afe28|2003|1
+2002|sludge|Mastodon|Remission|a87adcfd-8c65-3455-869b-25066046ebec|2002|1
+2004|sludge prog|Mastodon|Leviathan|7902c486-f670-3336-9850-b4112079d9e6|2004|1
+2006|sludge prog|Mastodon|Blood Mountain|8f2bde3a-8af2-3049-833b-b490ce78ae1c|2006|1
+2009|sludge prog|Mastodon|Crack the Skye|defcc444-7255-320d-bf21-888eb4d53ff9|2009|1
+2007|sludge|Baroness|Red Album|0f72f6e7-e59d-3501-94a5-97ff3061176c|2007|1
+2009|sludge|Baroness|Blue Record|d9a01dd4-31d2-43c5-bdf5-1666cf0d54ea|2009|1
+2002|sludge|Isis|Oceanic|2426e089-b3e2-3513-b43e-f1b73fb54e60|2002|1
+2004|sludge|Isis|Panopticon|4d0ec287-514f-32bc-8939-2705f49ca44c|2004|1
+2009|sludge|Kylesa|Static Tensions|61aabcf5-04b5-3fd0-93e1-f4c24c4c4526|2009|1
+2005|sludge|High on Fire|Blessed Black Wings|1ec5c67e-b185-35c3-9848-61065d281346|2005|1
+2007|sludge|High on Fire|Death Is This Communion|b9cea2cd-fcbf-3d51-aee7-6e5965e8c564|2007|1
+2004|sludge|Neurosis|The Eye of Every Storm|9f7c97c6-0fdf-3b29-86bb-af8d1c866acf|2004|1
+2008|sludge|Torche|Meanderthal|9003af2d-8051-3c43-810a-25482bf85e9d|2008|1
+2002|sludge groove|Down|Down II: A Bustle in Your Hedgerow|cafc1dc7-7a92-3efd-a99d-58d49a90b095|2002|1
+2004|sludge|Clutch|Blast Tyrant|50b03b51-7184-36d5-92c4-4cf26b6d9ed1|2004|1
+2009|sludge|Red Fang|Red Fang|578d57fc-88de-3027-b3dc-3315c403a9ad|2008|1
+2007|sludge|Weedeater|God Luck and Good Speed|3a7f87b2-d4f9-3856-b6ce-27af3acaccb8|2007|1
+2006|sludge|Cult of Luna|Somewhere Along the Highway|aebc4e2f-f900-3ccd-886f-626c2b02eca8|2006|1
+2001|sludge|Crowbar|Sonic Excess in Its Purest Form|00d9980c-92a4-3b48-b9ae-fb24f256f70e|2001|1
+2006|sludge heavy|The Sword|Age of Winters|04112fee-3453-38ec-a557-efde902c9c3f|2006|1
+2003|groove|Lamb of God|As the Palaces Burn|5eeaddca-f939-3ca1-a9c7-45efb8ffe65a|2003|1
+2004|groove|Lamb of God|Ashes of the Wake|6a44f03b-e1b1-359e-9c3e-3b7821b4e186|2004|1
+2006|groove|Lamb of God|Sacrament|e167e229-0a07-3550-abb9-4ee0ae84db19|2006|1
+2009|groove|Lamb of God|Wrath|b8885fc3-998b-371f-8d0e-294fc314a508|2009|1
+2003|groove thrash|Machine Head|Through the Ashes of Empires|e9963308-d781-3d7b-bf00-387370fcfd94|2003|1
+2007|groove thrash|Machine Head|The Blackening|b5464da8-ed5e-35fc-ba5d-bfc9b92ee33c|2007|1
+2005|groove|DevilDriver|The Fury of Our Maker's Hand|cc5031e1-a02b-3b01-9b8c-4ce75a952d27|2005|1
+2003|groove|Chimaira|The Impossibility of Reason|5dc69b6f-fa75-3435-a55f-9486e0d24798|2003|1
+2004|groove|Damageplan|New Found Power|a44e6d4d-3ef3-3bbf-b95b-7ca839c02d73|2004|1
+2007|groove|Five Finger Death Punch|The Way of the Fist|299f6b0b-c895-3a8a-bad9-1e83016784f9|2007|1
+2002|groove sludge|Superjoint Ritual|Use Once and Destroy|55f5e86e-9e9a-3ec6-bd30-56c392d974fa|2002|1
+2000|groove|Pantera|Reinventing the Steel|03212229-7462-38b7-99e8-c5069209d192|2000|1
+2000|groove nu|Soulfly|Primitive|86462307-5099-3fb7-ab43-f64d68b8bef7|2000|1
+2000|nu|Linkin Park|Hybrid Theory|b5b4bb4b-8ba5-3acf-88cb-4cae2699d8da|2000|1
+2003|nu|Linkin Park|Meteora|09474d62-17dd-3a4f-98fb-04c65f38a479|2003|1
+2001|nu|Slipknot|Iowa|082c68eb-d993-36cf-9b32-6663cba2d052|2001|1
+2004|nu|Slipknot|Vol. 3: (The Subliminal Verses)|aa38e6f0-e748-35c8-a8d4-04ff660e9354|2004|1
+2008|nu|Slipknot|All Hope Is Gone|6a75b970-84c9-3794-bafd-261f82f1343c|2008|1
+2001|nu|System of a Down|Toxicity|f50fbcb4-bfcd-3784-b4c9-44f4793e66b2|2001|1
+2002|nu|System of a Down|Steal This Album!|3351730c-7853-38f3-8d56-1bf627de4523|2002|1
+2005|nu|System of a Down|Mezmerize|8d18c070-adea-353f-a089-cbd2543342dd|2005|1
+2005|nu|System of a Down|Hypnotize|72035143-d6ec-308b-8ee5-070b8703902a|2005|1
+2000|nu|Deftones|White Pony|a7d33e96-8e09-3aff-8629-44812a1b8489|2000|1
+2003|nu|Deftones|Deftones|f423c6e6-410c-3b43-94ec-8f7a2c02f052|2003|1
+2006|nu|Deftones|Saturday Night Wrist|82be2ea8-9c50-3024-a1be-cf35c2e5fd69|2006|1
+2002|nu|Korn|Untouchables|4041334a-fdca-3a73-878e-8513b464a88d|2002|1
+2000|nu|Disturbed|The Sickness|92852c11-b67d-32b9-84d8-b52bba0cec9e|2000|1
+2002|nu|Disturbed|Believe|93cf80e6-65c8-397a-8fad-ebbc66317150|2002|1
+2005|nu|Disturbed|Ten Thousand Fists|79893cb5-c656-355e-b7eb-f79727b0e499|2005|1
+2000|nu|Papa Roach|Infest|0193355a-cdfb-3936-afd2-44d651eb006d|2000|1
+2000|nu|Mudvayne|L.D. 50|a7fc1d25-7b86-3c76-bcbb-64ab29287a70|2000|1
+2000|nu|Limp Bizkit|Chocolate Starfish and the Hot Dog Flavored Water|55203b2f-314b-39c2-9e48-56a95e41a337|2000|1
+2001|nu|P.O.D.|Satellite|01b86afc-2c23-493b-bc64-1189352b247c|2001|1
+2001|nu|Drowning Pool|Sinner|0a67b799-032f-3212-ba23-66b69d66408d|2001|1
+2001|nu|Ill Niño|Revolution Revolución|f9849afe-aa67-315d-a7c8-ca60d726ec7a|2001|1
+2001|nu|Sevendust|Animosity|1f1ea5ae-f28b-3ba2-ae6f-0fd9490ca323|2001|1
+2003|nu|Evanescence|Fallen|2187d248-1a3b-35d0-a4ec-bead586ff547|2003|1
+2001|nu industrial|Static-X|Machine|0475b73b-bdb6-34c0-b8b1-667ad85ae35b|2001|1
+2002|power|Blind Guardian|A Night at the Opera|b03a8800-55cc-3c9d-b47a-cb603f18103d|2002|1
+2001|power|Sonata Arctica|Silence|d36281d2-4602-378f-a934-696d5153dc34|2001|1
+2003|power|Sonata Arctica|Winterheart's Guild|487f2023-cf14-337a-b089-161765cc96af|2003|1
+2000|power|Nightwish|Wishmaster|c32724fe-9b96-3e3a-b687-fc76b1bcbe25|2000|1
+2002|power|Nightwish|Century Child|cc4fe8bd-3996-3fe9-9860-fe23189a22a4|2002|1
+2004|power|Nightwish|Once|84d8f181-8307-360f-bd50-8b6ce1309751|2004|1
+2003|power|DragonForce|Valley of the Damned|880c6868-1c27-32e3-9fea-2faac2d82a0e|2003|1
+2006|power|DragonForce|Inhuman Rampage|9f7d7652-cf16-3384-86a2-f14bc0f1a67b|2005|1
+2003|power prog|Kamelot|Epica|052f831f-319d-3b64-8c85-5c570223e928|2003|1
+2005|power prog|Kamelot|The Black Halo|30be80ea-c75d-3dc0-8e0e-4fad471815ca|2005|1
+2002|power|HammerFall|Crimson Thunder|d30d98b7-2da1-3237-bb50-42adadd3d239|2002|1
+2001|power thrash|Iced Earth|Horror Show|d3015d8c-1b2c-32f2-858a-de6a98f70ef3|2001|1
+2001|power|Edguy|Mandrake|76a80d80-18f3-36a7-ac8d-ba959a89f36d|2001|1
+2004|power|Edguy|Hellfire Club|643befca-3045-31d9-aad8-885f68996184|2004|1
+2000|power|Stratovarius|Infinite|458cee79-b03f-3397-8858-e03529b60e94|2000|1
+2005|power|Sabaton|Primo Victoria|f0732bd0-c1ea-3aee-8e11-8b3d67910bb6|2005|1
+2008|power|Sabaton|The Art of War|e621d007-031d-331a-8aea-fe81d2b8b853|2008|1
+2002|power|Rhapsody|Power of the Dragonflame|36070668-af02-333a-8b58-56652ece8ed5|2002|1
+2001|power|Avantasia|The Metal Opera|c9b4d2e6-dc11-37c7-b99d-3244fc4ea1a4|2001|1
+2001|power|Primal Fear|Nuclear Fire|8ec7a94d-9371-3d72-825f-4e6bec0a70ba|2000|1
+2003|power|Epica|The Phantom Agony|c3826e0f-ce3e-347e-9d15-5ec0efc0a2e3|2003|1
+2004|power|Within Temptation|The Silent Force|1f4ba532-37a5-33fb-ac01-b32f4fad7c5d|2004|1
+2000|prog power|Symphony X|V: The New Mythology Suite|03c42255-e3cc-3dc1-8240-44d7b1367311|2000|1
+2007|prog power|Symphony X|Paradise Lost|d59c9d23-7f69-3d1f-8678-dd9d4d8406e4|2007|1
+2002|prog|Dream Theater|Six Degrees of Inner Turbulence|74a4416f-1c7f-3f67-8208-b978c7b9379d|2002|1
+2003|prog|Dream Theater|Train of Thought|3eb5524e-34c6-31d8-97cc-fb98356825fb|2003|1
+2005|prog|Dream Theater|Octavarium|5a52d5f9-9173-3d88-bc27-569e333f9207|2005|1
+2007|prog|Dream Theater|Systematic Chaos|44aef5b4-36fc-3b45-b58b-59f2ca69d453|2007|1
+2001|prog|Tool|Lateralus|02f79295-21e1-34cc-82f2-63219eec4f0a|2001|1
+2006|prog|Tool|10,000 Days|ecfd0a01-57c8-3949-990a-1a950942e0e0|2006|1
+2002|prog|Meshuggah|Nothing|aaf90df0-eec3-3d55-83fd-67b9cf034eb4|2002|1
+2008|prog|Meshuggah|obZen|bc3c02ea-5837-32ab-9c65-f60125458187|2008|1
+2002|prog|Porcupine Tree|In Absentia|94cfdc4c-5eb5-3b62-9dbe-8e051528c6e5|2002|1
+2007|prog|Porcupine Tree|Fear of a Blank Planet|bca73156-8f32-3e56-8d83-2fb537b8fb6e|2007|1
+2005|prog core|Between the Buried and Me|Alaska|1e69e3fb-a1a9-3db5-a8a1-d187ce405c26|2005|1
+2007|prog core|Between the Buried and Me|Colors|97c06f4a-0206-3547-b5f4-c44be9334bc1|2007|1
+2002|prog|Pain of Salvation|Remedy Lane|78d86035-21da-36e7-99f8-cfff11506705|2002|1
+2008|prog death|Cynic|Traced in Air|e49eef26-4a65-3c8e-bf86-3f3e3c819227|2008|1
+2001|prog|Devin Townsend|Terria|fc580032-973b-3e15-a612-ff95f5c37f47|2001|1
+2002|core|Killswitch Engage|Alive or Just Breathing|f2f3d37e-7099-37c4-8e94-085b3b4a374a|2002|1
+2004|core|Killswitch Engage|The End of Heartache|7fef0d18-8c73-3c82-811c-a62a0a92859d|2004|1
+2006|core|Killswitch Engage|As Daylight Dies|eeb3218d-10ae-3875-8b3a-ce282697d419|2006|1
+2005|core|As I Lay Dying|Shadows Are Security|fca9f5a9-34ca-39f4-bfae-11a88e533401|2005|1
+2007|core|As I Lay Dying|An Ocean Between Us|cf968cc1-a541-3e53-abc4-05dee65ad670|2007|1
+2001|core|Converge|Jane Doe|f56e3b38-c620-32f4-9845-2e2115f5e96f|2001|1
+2004|core|Converge|You Fail Me|2b5ed727-a499-3b2c-ae17-3daeac886d14|2004|1
+2009|core|Converge|Axe to Fall|5d95ce08-dc0b-450a-9730-611515f668fa|2009|1
+2005|core thrash|Trivium|Ascendancy|54b8b44e-4153-3fc2-af0a-70c9c72ab9d3|2005|1
+2006|core thrash|Trivium|The Crusade|0808245a-6ec5-3036-9bb0-7e225a719034|2006|1
+2008|core thrash|Trivium|Shogun|2803e437-51cc-305e-a8fe-2daba8901eac|2008|1
+2004|core|Shadows Fall|The War Within|0a79eb3b-c9e0-3dc6-a30c-c00a012b0dd9|2004|1
+2004|core|Unearth|The Oncoming Storm|20de081e-e6f0-3256-b46f-35d07905d18e|2004|1
+2005|core heavy|Bullet for My Valentine|The Poison|8fc4742b-2d82-36a1-9736-685e56333f47|2005|1
+2007|core|August Burns Red|Messengers|ed803955-40b2-324c-a417-7778ed4b6e47|2007|1
+2009|core|August Burns Red|Constellations|cfe9f926-629c-4a60-aca4-804b6fa6a3c8|2009|1
+2004|core prog|The Dillinger Escape Plan|Miss Machine|60089b39-412b-326c-afc7-aaa47113d84f|2004|1
+2007|core prog|The Dillinger Escape Plan|Ire Works|1608b4bf-4909-3a7a-b318-f3b045a090f6|2007|1
+2002|core|Norma Jean|Bless the Martyr and Kiss the Child|0f5959aa-dc8d-363b-97e8-bd0c336e216f|2002|1
+2004|core|Atreyu|The Curse|29453ef2-7ed5-32ca-a4a4-ca1511bb4513|2004|1
+2008|core|Bring Me the Horizon|Suicide Season|bd29e155-81aa-3600-8de3-a9dea76da4c9|2008|1
+2007|core|Parkway Drive|Horizons|6d45b99e-137c-3e30-9b69-4e399fbc76f3|2007|1
+2002|core|Hatebreed|Perseverance|5e50a843-28d6-3b65-9df3-9d3d7a7119f0|2002|1
+2006|core|Underoath|Define the Great Line|9f9d9f20-2653-32e9-b048-26abbaf227da|2006|1
+2003|core heavy|Avenged Sevenfold|Waking the Fallen|1c7120ae-32b6-3693-8974-599977b01601|2003|1
+2001|industrial|Rammstein|Mutter|833a9e1a-62c0-32f6-ab47-7797c4d83b07|2001|1
+2004|industrial|Rammstein|Reise, Reise|ea9bf147-abbd-39df-b927-46fc945a5140|2004|1
+2005|industrial|Rammstein|Rosenrot|15e65e08-85d1-3145-85b2-e18b9fbd4cba|2005|1
+2009|industrial|Rammstein|Liebe ist für alle da|da9fcca3-7dfc-45ee-b94e-54d898fe5bf3|2009|1
+2001|industrial groove|Fear Factory|Digimortal|0fc656d4-474d-3f36-90af-084f3f689b65|2001|1
+2004|industrial groove|Fear Factory|Archetype|8afdf2bc-345f-384d-a483-d5a05146f8a1|2004|1
+2004|industrial thrash|Ministry|Houses of the Molé|3f6f23dc-c5ae-3d6f-8a9d-e214af4c0dbd|2004|1
+2006|industrial thrash|Ministry|Rio Grande Blood|181488d8-817b-3d06-81f7-fced4bee27cd|2006|1
+2000|industrial|Marilyn Manson|Holy Wood (In the Shadow of the Valley of Death)|db6a41da-710b-36eb-a288-48b4b1c5b130|2000|1
+2003|industrial|Marilyn Manson|The Golden Age of Grotesque|650e64b0-3fff-39eb-891f-050b1a4a41b0|2003|1
+2003|industrial nu|Static-X|Shadow Zone|f5d8d7b6-5699-35ac-b661-63f3c4fcf4cb|2003|1
+2005|industrial|Nine Inch Nails|With Teeth|10224fb3-a861-3247-9eab-81b7b0fbb0d4|2005|1
+2007|industrial|Nine Inch Nails|Year Zero|3bd76d40-7f0e-36b7-9348-91a33afee20e|2007|1
+2001|industrial|Godflesh|Hymns|14f2e729-ad8a-3bc7-af21-d8b008a3aad1|2001|1
+2005|industrial prog|Strapping Young Lad|Alien|8c95067d-67f5-33b9-ad8a-da82ed0fcddb|2005|1
+2001|industrial groove|Rob Zombie|The Sinister Urge|bc154099-bbd3-3abf-8053-8d2b471b39ce|2001|1
+2000|heavy|Iron Maiden|Brave New World|80296824-f1f3-3d1d-a073-c4469bfa6952|2000|1
+2003|heavy|Iron Maiden|Dance of Death|3bbfa3e4-dfbc-31f2-93d8-86f109d5158c|2003|1
+2006|heavy|Iron Maiden|A Matter of Life and Death|f27a9426-7f13-3c21-8861-204e42a82bd8|2006|1
+2005|heavy|Judas Priest|Angel of Retribution|14801eea-668c-3f50-bd59-b7c0bcbf3145|2005|1
+2008|heavy|Judas Priest|Nostradamus|19a085d1-21de-371d-8715-87779489154d|2008|1
+2002|heavy|Dio|Killing the Dragon|4482bd6d-4400-3be0-8804-572939fa012e|2002|1
+2009|heavy doom|Heaven & Hell|The Devil You Know|2bbdd576-5f01-3356-bff1-0ab5257ca33f|2009|1
+2004|heavy|Motörhead|Inferno|0b4ec2a1-c8fe-4dd0-a0b1-d2926a85be15|2004|1
+2001|heavy|Ozzy Osbourne|Down to Earth|c76e9935-1cef-3339-930f-cf1914fd1037|2001|1
+2003|heavy groove|Black Label Society|The Blessed Hellride|809b07e5-87c6-35b4-a017-7586e69220c8|2003|1
+2008|heavy|Enforcer|Into the Night|c91e01de-d45c-42a2-a736-6261ed9ed61f|2008|1
+2004|heavy|Saxon|Lionheart|511a203b-0c02-3190-9050-46707996a433|2004|1
+2005|heavy|Avenged Sevenfold|City of Evil|180560ee-2d9d-33cf-8de7-cdaaba610739|2005|1
+2003|heavy nu|Metallica|St. Anger|8f1cc89b-7e80-3e1c-b571-8cf2b98db347|2003|1
+2011|thrash|Havok|Time Is Up|bc728853-7c56-4f1e-944a-317d94a3945c|2011|1
+2013|thrash|Havok|Unnatural Selection|55229534-b4ab-4c09-84ea-62318d025be5|2013|1
+2017|thrash|Havok|Conformicide|0f96e90d-3e32-4e24-8fae-943903ecc7d5|2017|1
+2012|thrash|Kreator|Phantom Antichrist|bd5be3ae-4a70-4bb6-8704-614170761457|2012|1
+2017|thrash|Kreator|Gods of Violence|074dcb38-9064-4e05-aead-c8487c12b5fe|2017|1
+2012|thrash|Testament|Dark Roots of Earth|f40b7679-500f-4ed1-97c9-df732f3dc67c|2012|1
+2016|thrash|Testament|Brotherhood of the Snake|b4d5464b-3e38-4b51-8cc8-e96ea0033865|2016|1
+2014|thrash|Exodus|Blood In, Blood Out|2300cc87-2134-4b0a-803b-93707086dfba|2014|1
+2016|thrash|Megadeth|Dystopia|6a5de5f5-b26a-4cf5-a497-b8238d0f6f40|2016|1
+2016|thrash heavy|Metallica|Hardwired… to Self-Destruct|55d8ab42-990b-4c94-93c8-9ca7927b5fc0|2016|1
+2015|thrash|Slayer|Repentless|d1e3a8da-3188-41d8-877c-7b9f2c3cb127|2015|1
+2011|thrash prog|Vektor|Outer Isolation|a2fa1308-588a-444d-9c9a-3590a157a3d1|2011|1
+2016|thrash prog|Vektor|Terminal Redux|8c14bbdd-de87-48fa-8cc9-153c3d56583e|2016|1
+2013|thrash|Power Trip|Manifest Decimation|b19b6d1e-eabe-4b44-962e-873e161af581|2013|1
+2017|thrash|Power Trip|Nightmare Logic|ed3ea0e4-62c2-4d27-9d0a-6c4cd6c64cc3|2017|1
+2012|thrash|Municipal Waste|The Fatal Feast|da60d0f4-d34a-4fbc-a87c-fcf275c6ca08|2012|1
+2016|thrash|Sodom|Decision Day|78d960d8-2185-4dd3-bf3e-95e05efe2ece|2016|1
+2010|thrash|Overkill|Ironbound|25bac82a-7744-4326-bcdc-e0fdac135965|2010|1
+2010|thrash|Death Angel|Relentless Retribution|979874eb-eef1-4442-b059-9ec18d94c82c|2010|1
+2019|thrash|Death Angel|Humanicide|67c9a30c-a590-4971-8e3d-d76977eadb62|2019|1
+2017|thrash|Warbringer|Woe to the Vanquished|8ca4a8f7-b45a-4aea-96d1-eeca8d4ec1bc|2017|1
+2013|thrash|Toxic Holocaust|Chemistry of Consciousness|3575aa4b-2d59-442b-8bcf-bb67b779280d|2013|1
+2012|death prog groove|Gojira|L'Enfant sauvage|ad0c19f2-0791-431a-8958-9aed92ef7963|2012|1
+2016|death prog groove|Gojira|Magma|f8481d5e-73fe-491a-b187-7b88f4d0fce1|2016|1
+2014|death black|Behemoth|The Satanist|32614cbf-4dcd-4f78-8b69-13d82c4a9887|2014|1
+2018|death|Tomb Mold|Manor of Infinite Forms|2b06b9c8-3998-4c5b-89ad-622644275b66|2018|1
+2019|death prog|Blood Incantation|Hidden History of the Human Race|c70deb1c-54c4-426d-8372-2feda98982d8|2019|1
+2015|death|Horrendous|Anareta|fb05833f-703d-4e27-9b75-1ae636ed998f|2015|1
+2017|death|Morbid Angel|Kingdoms Disdained|a782c277-caad-4a09-afbd-312599275d32|2017|1
+2017|death|Cannibal Corpse|Red Before Black|4a107622-eda0-40f0-81c8-f31ffdbec591|2017|1
+2011|death prog|Obscura|Omnivium|88679de1-99e3-49f3-bf64-57a64f1dabe9|2011|1
+2013|death prog|Ulcerate|Vermis|ba18ca5c-d14a-4d72-a619-da45e6339477|2013|1
+2016|death prog|Ulcerate|Shrines of Paralysis|0dafeed2-85f1-4a82-b299-e5b18abcce9b|2016|1
+2013|death prog|Gorguts|Colored Sands|6153aa16-7ec4-483d-9592-29039fc27f25|2013|1
+2013|death|Carcass|Surgical Steel|f4e64af6-9914-43ab-acc0-7e800af84bee|2013|1
+2013|death|Amon Amarth|Deceiver of the Gods|732fa5a7-b4ab-4e83-adb0-ab132e6993b5|2013|1
+2016|death|Amon Amarth|Jomsviking|f0607e1d-c2e1-41a4-b69b-f3fc396a5e67|2016|1
+2016|death|Dark Tranquillity|Atoma|8365d48b-8569-4e36-967f-4d7373c53adb|2016|1
+2016|death doom|Insomnium|Winter's Gate|850e7b46-91ec-4bde-b9c7-139e64acf9b3|2016|1
+2017|death|The Black Dahlia Murder|Nightbringers|dfffaf53-a9da-4ab6-950e-309af8790274|2017|1
+2018|death prog|Rivers of Nihil|Where Owls Know My Name|c6ea1274-8725-4892-81d4-6cca59967259|2018|1
+2012|death|Nile|At the Gate of Sethu|7c4fcc62-3a2a-4982-b124-1c0cf5951a75|2012|1
+2012|death|Cattle Decapitation|Monolith of Inhumanity|d769df66-8769-4c7a-ab3d-21ec62f2d534|2012|1
+2015|death|Cattle Decapitation|The Anthropocene Extinction|b3a3c93f-97ba-4f4d-9ba7-52938df358a5|2015|1
+2014|death prog|Fallujah|The Flesh Prevails|86204f24-e402-404a-85b6-70446ff66cc9|2014|1
+2014|death thrash|Revocation|Deathless|f3eb7192-7b7a-4146-aea5-6ed6ad6332d6|2014|1
+2014|death|Bloodbath|Grand Morbid Funeral|1460f254-4c8d-4dd2-8365-9ba86b772363|2014|1
+2017|death|Dying Fetus|Wrong One to Fuck With|d2ce33f6-7e10-44f7-a9ab-79c631cb0d88|2017|1
+2016|death|Venom Prison|Animus|657f4c80-1699-4ad6-85dc-76585c9d62ce|2016|1
+2013|black|Deafheaven|Sunbather|8a061d0e-fa0c-4571-91ff-8bc3911b6428|2013|1
+2015|black|Deafheaven|New Bermuda|8118232a-f25f-4314-8526-38fa3143a028|2015|1
+2018|black|Deafheaven|Ordinary Corrupt Human Love|ea7fee59-2096-4aaf-8725-31298098c8e7|2018|1
+2010|black|Watain|Lawless Darkness|34750fb6-178a-4b07-b033-1ac6ccf9108b|2010|1
+2013|black|Watain|The Wild Hunt|68730a26-d08a-40ba-b582-e84fd87a25b8|2013|1
+2015|black|Mgła|Exercises in Futility|1ae1b593-2ac7-45ea-b8df-107703e0ee1a|2015|1
+2012|black|Mgła|With Hearts Toward None|a889f8e1-8850-4b1e-86e4-0c9f4ff8f504|2012|1
+2015|black|Batushka|Litourgiya|88ae8a36-edf3-490e-9d78-ecccf8ef2209|2015|1
+2011|black|Wolves in the Throne Room|Celestial Lineage|42c8c669-e2e3-49da-8b25-f046ca99bbf4|2011|1
+2017|black|Wolves in the Throne Room|Thrice Woven|34d4ac60-6dd8-4124-b49c-17553ae27e1f|2017|1
+2016|black|Uada|Devoid of Light|6129fe11-2c77-45e0-8b22-1f5eba2aa2d0|2016|1
+2012|black|Panopticon|Kentucky|7338e2dc-d8d4-4510-a547-5ffa6ba1ba76|2012|1
+2010|black|Alcest|Écailles de lune|9cdee313-b6c0-41e2-b513-91d46fc6837a|2010|1
+2016|black|Alcest|Kodama|99d51091-53ee-4ed7-b5ef-afc0df92b1fe|2016|1
+2015|black prog|Dødheimsgard|A Umbra Omega|2e18d33c-5ebc-44ae-8c56-9c4e56714adb|2015|1
+2014|black|Mayhem|Esoteric Warfare|1c21799e-5137-4b35-8abf-b7a438eff745|2014|1
+2019|black|Mayhem|Daemon|35bad3dc-c7dd-4d65-8078-ebef4d994517|2019|1
+2018|black|Immortal|Northern Chaos Gods|1e334830-3649-4306-9ef9-2c41297d12a8|2018|1
+2011|black|Liturgy|Aesthethica|1462ded7-2cd7-4ae0-b290-c6612220f048|2011|1
+2015|black|Der Weg einer Freiheit|Stellar|6472c453-8836-41c6-bf43-4bd249140c8f|2015|1
+2012|doom|Pallbearer|Sorrow and Extinction|ce66f143-1ada-4093-8356-07559d0c31b0|2012|1
+2014|doom|Pallbearer|Foundations of Burden|2e71ee93-f250-47fd-8d97-e08c98d75789|2014|1
+2017|doom|Pallbearer|Heartless|d96ebace-af39-4d44-8c0c-0c363996b1e7|2017|1
+2013|doom|Windhand|Soma|041a7130-8586-440f-b226-95cee50e1068|2013|1
+2011|doom sludge|Yob|Atma|e50c53a0-6ce1-41a2-b5ee-5a94a1f11010|2011|1
+2014|doom sludge|Yob|Clearing the Path to Ascend|87cb1575-2c00-4c2c-ba88-f7cd69c57b6a|2014|1
+2018|doom sludge|Yob|Our Raw Heart|35cd0401-747f-42ea-920b-e5f6b844d4fc|2018|1
+2010|doom|Electric Wizard|Black Masses|b4d0e711-50e1-4876-b141-8cf5bfa8cb65|2010|1
+2014|doom|Electric Wizard|Time to Die|61b8b2bb-5887-4c64-9d95-139efad7e85a|2014|1
+2017|doom|Bell Witch|Mirror Reaper|a06e0f0a-bfa4-4e5c-bb71-f2c46288bf73|2017|1
+2016|doom|Khemmis|Hunted|fe5af975-3411-4150-b84a-d753761ec75b|2016|1
+2018|doom|Khemmis|Desolation|9676a55e-95ab-4f27-a5a5-c120d2ecbeee|2018|1
+2019|doom|Candlemass|The Door to Doom|3e90c0c7-cde6-45c2-9f74-bfc419507326|2019|1
+2015|doom|Pentagram|Curious Volume|a0343b5c-b194-46e0-8de3-1cabbbc5a4d6|2015|1
+2015|doom|Paradise Lost|The Plague Within|3f8e1077-b2ee-4bdd-8291-13b9e1c041ec|2015|1
+2017|doom death|Paradise Lost|Medusa|1693e927-a325-4cfe-9c30-cb7594fad3b1|2017|1
+2015|doom|Crypt Sermon|Out of the Garden|30d5a7a4-db6e-43ad-b9eb-e4814e930a80|2015|1
+2015|doom death|Swallow the Sun|Songs From the North I, II & III|9fd7353f-a863-4730-bf18-5dc00cda7d2d|2015|1
+2011|doom heavy|Uncle Acid & the Deadbeats|Blood Lust|688f9429-f883-42ba-86f7-9cd1df4e4de5|2011|1
+2013|doom|Cathedral|The Last Spire|a0101df8-c1e7-4b7f-ab68-d58a8c58147c|2013|1
+2012|doom|Ahab|The Giant|25756f6f-1524-41d7-83a3-a169969cdee1|2012|1
+2015|doom sludge|Monolord|Vænir|3121b8e6-e22a-4c0f-a78e-f9ff24ffe5c9|2015|1
+2014|doom sludge|Conan|Blood Eagle|7a56072e-3ba8-4474-afaf-0feb7546929d|2014|1
+2011|sludge prog|Mastodon|The Hunter|3c73bc27-4567-4957-8cfb-929d79b3a6ce|2011|1
+2014|sludge prog|Mastodon|Once More 'Round the Sun|be9c455b-d2cd-4738-8105-e42712f38e74|2014|1
+2017|sludge prog|Mastodon|Emperor of Sand|31cedc9c-9227-4e46-9b07-13589c525b77|2017|1
+2012|sludge|Baroness|Yellow & Green|20b8f926-56dd-423e-9deb-9a93bdead9cf|2012|1
+2015|sludge|Baroness|Purple|df98ad28-b0b2-4aa6-8353-eea4146b93f1|2015|1
+2019|sludge|Baroness|Gold & Grey|95d5e345-5109-4fe9-9ba9-03a3898f0039|2019|1
+2010|sludge|Kylesa|Spiral Shadow|8ec31b11-cde3-4e93-ac7e-214ca63932c8|2010|1
+2010|sludge|High on Fire|Snakes for the Divine|be17617d-849f-48b4-ab93-2349bc67f08d|2010|1
+2012|sludge|High on Fire|De Vermis Mysteriis|26371a98-daca-4798-8c22-8bc9dfb93b26|2012|1
+2015|sludge|High on Fire|Luminiferous|674c78f0-b426-43df-974d-f2968d6ffeea|2015|1
+2018|sludge|High on Fire|Electric Messiah|9f5c88e6-3831-4575-a410-531d93eee386|2018|1
+2011|sludge|Red Fang|Murder the Mountains|0e5b7ba3-2f3f-4405-b79a-9fa92478f83d|2011|1
+2013|sludge|Red Fang|Whales and Leeches|0ed74031-0c45-4725-bb3f-684a2577ba82|2013|1
+2012|sludge|Torche|Harmonicraft|3a020634-0c18-471c-8556-55c823ce1813|2012|1
+2014|sludge doom|Thou|Heathen|16295b1f-ff0a-4045-951c-5eab7b9e48ce|2014|1
+2017|sludge doom|Primitive Man|Caustic|7347c5c6-b253-4c41-bdc2-78676374ecf8|2017|1
+2013|sludge|Inter Arma|Sky Burial|f14fd53e-45b1-46a4-915e-4b9cd874c823|2013|1
+2010|sludge heavy|Kvelertak|Kvelertak|835314cb-26e6-4235-9ace-32116515214a|2010|1
+2013|sludge heavy|Kvelertak|Meir|387431e2-4a5d-4035-9c2b-31e06876c9f6|2013|1
+2014|sludge|Eyehategod|Eyehategod|50d488a1-635d-4cad-bd6f-b9d5c399b9f1|2014|1
+2011|sludge|Crowbar|Sever the Wicked Hand|55fd4b1c-be9b-41f6-92b6-f673bc32e5f4|2011|1
+2013|sludge|Cult of Luna|Vertikal|84aca336-d9ed-493d-a575-72ecb7686f88|2013|1
+2019|sludge|Cult of Luna|A Dawn to Fear|f0ac04e0-8099-4f7a-82f6-b3685f48de84|2019|1
+2012|sludge|Neurosis|Honor Found in Decay|cfb90fa5-6593-4dd6-b503-3f6aae6a14a0|2012|1
+2016|sludge|Neurosis|Fires Within Fires|3afc8076-b5b6-4c09-b8d1-62d343ecbb38|2016|1
+2015|sludge|Elder|Lore|0edeecde-a5c0-4f33-829f-25dd2607ac55|2015|1
+2018|sludge doom|Sleep|The Sciences|b6259fde-0c3a-40e7-85d0-51acefb4dc39|2018|1
+2015|sludge|Weedeater|Goliathan|5351ce1e-f76f-4d4c-90db-21429741c8b7|2015|1
+2012|groove|Lamb of God|Resolution|3cc68275-4a0b-4a45-8871-8cccec423a99|2012|1
+2015|groove|Lamb of God|VII: Sturm und Drang|d739702b-72d3-4d06-b3f6-41f629b61e4b|2015|1
+2011|groove thrash|Machine Head|Unto the Locust|e36d3ace-45af-4a38-b773-df2f020a4ea5|2011|1
+2014|groove thrash|Machine Head|Bloodstone & Diamonds|8fee19ef-e7b1-4a88-b453-f35607195bc4|2014|1
+2011|groove|Five Finger Death Punch|American Capitalist|c72c8241-7adf-48b7-9431-a55f1a4c6223|2011|1
+2011|groove|DevilDriver|Beast|3b000f8a-3fbd-4adf-9c9b-f9f56bd79097|2011|1
+2017|groove thrash|Sepultura|Machine Messiah|1f0c2ccb-60ec-4a86-a5b0-3a5e6c15352e|2017|1
+2016|groove prog|Jinjer|King of Everything|2cb75a17-1eb9-4c48-a469-729d0ac71a6a|2016|1
+2019|groove prog|Jinjer|Macro|d0621c72-9080-4037-b92b-d473b3b98ec9|2019|1
+2011|groove|Chimaira|The Age of Hell|cc428def-4e7e-4958-bcef-43f0710c504f|2011|1
+2015|groove|Soulfly|Archangel|14e3f683-d717-4a37-9527-a557cdf11aa3|2015|1
+2010|groove heavy|Black Label Society|Order of the Black|ba5fed22-b744-43e1-96fa-a7dff12f194e|2010|1
+2014|nu|Slipknot|.5: The Gray Chapter|7ae66014-0153-4f48-ad22-973b0582261c|2014|1
+2019|nu|Slipknot|We Are Not Your Kind|89bfb6c8-f612-43c4-a7f3-d245102557e3|2019|1
+2011|nu industrial|Korn|The Path of Totality|cf8b5296-fcc4-4ddd-9a47-05246395448b|2011|1
+2016|nu|Korn|The Serenity of Suffering|06781e27-b69a-4433-ac84-937d66b42e8a|2016|1
+2019|nu|Korn|The Nothing|aea64c24-26b8-4035-af8b-d0ccac6fd3ab|2019|1
+2012|nu|Deftones|Koi No Yokan|87338b87-34e2-4f11-8e2e-600636b6dbcb|2012|1
+2016|nu|Deftones|Gore|4c0a6c9b-090b-4159-a359-a328d94c50d3|2016|1
+2010|nu|Deftones|Diamond Eyes|f21cec66-4e3a-42fc-b7e4-59b17bed0cca|2010|1
+2010|nu|Linkin Park|A Thousand Suns|65404106-2976-4f98-a0e2-4e76923ea06d|2010|1
+2012|nu|Linkin Park|Living Things|af682b63-021e-4806-afac-9aa4380fc6bd|2012|1
+2014|nu|Linkin Park|The Hunting Party|20292abb-7023-495b-8081-4b7be106a3b1|2014|1
+2010|nu|Disturbed|Asylum|9f752bea-1c89-4841-8be4-685d6f2b1cfe|2010|1
+2015|nu|Disturbed|Immortalized|4f70d382-edef-40e5-afe7-09ae2c5d10d1|2015|1
+2012|nu heavy|Stone Sour|House of Gold & Bones, Part 1|3450d796-dc62-46c4-a9fd-8e1380593903|2012|1
+2011|nu|Limp Bizkit|Gold Cobra|bf5318e4-4842-4010-8113-7981cc5f87fe|2011|1
+2017|nu core|Motionless in White|Graveyard Shift|9ec7d5cd-cdc2-4c97-b78e-f752b72ce6be|2017|1
+2014|nu core|Issues|Issues|26233a06-ee88-450b-91cf-d17c9d28aa4c|2014|1
+2015|nu|Coal Chamber|Rivals|9b5937e6-4398-401b-b42c-f0dfbc254584|2015|1
+2010|power|Sabaton|Coat of Arms|9fbe40d4-929d-41b1-8db7-d95cc8e5989a|2010|1
+2012|power|Sabaton|Carolus Rex|6d2e2846-1140-4c5d-9cf6-6dd3fa2aa126|2012|1
+2014|power|Sabaton|Heroes|907ba613-4896-4ece-9844-e0b1d32dade8|2014|1
+2016|power|Sabaton|The Last Stand|c178c4e1-49af-44a5-9cb6-2182a5a42820|2016|1
+2019|power|Sabaton|The Great War|2f2e59d1-1836-4802-a3f4-269bfc8ddfdf|2019|1
+2011|power|Nightwish|Imaginaerum|0eaa9306-e6df-47be-94ce-04bfe3df782c|2011|1
+2015|power|Nightwish|Endless Forms Most Beautiful|2f225b26-8867-41bc-aede-718bd3c9fa18|2015|1
+2011|power|Powerwolf|Blood of the Saints|d85995c7-bed5-46e2-93a0-ba5e495569c4|2011|1
+2013|power|Powerwolf|Preachers of the Night|47c41871-b536-40a9-bf04-bd82f3a0a89e|2013|1
+2015|power|Powerwolf|Blessed & Possessed|6c2e4b32-185a-42da-9891-a7a93d2b9adf|2015|1
+2018|power|Powerwolf|The Sacrament of Sin|7b757ff3-5bbd-4f1c-83ef-6970ba01d202|2018|1
+2010|power|Blind Guardian|At the Edge of Time|bd2db069-4c77-450c-9df4-ba55e10b708e|2010|1
+2015|power|Blind Guardian|Beyond the Red Mirror|e72d7b5c-73e4-44a1-a39c-f3dcfab60d72|2015|1
+2014|power|DragonForce|Maximum Overload|531516fa-6318-44d5-9ad1-92eefbe3a1bb|2014|1
+2012|power prog|Kamelot|Silverthorn|8dde4fe9-4478-4452-a249-4cfbc4385fb7|2012|1
+2015|power prog|Kamelot|Haven|a172c1d6-e186-4ef7-9ceb-948760a5c42b|2015|1
+2015|power|Helloween|My God-Given Right|eb585213-71ce-43b7-af0b-d9a43fb0ed07|2015|1
+2016|power|Avantasia|Ghostlights|46154b0f-c473-4d45-83dd-d649981c77aa|2016|1
+2013|power|Gloryhammer|Tales From the Kingdom of Fife|2f07ff94-4ff0-4c99-b5e8-1807b82dd60e|2013|1
+2015|power|Gloryhammer|Space 1992: Rise of the Chaos Wizards|e65ef65e-ef09-4f3b-86d0-8f4f80127df6|2015|1
+2011|power|HammerFall|Infected|efaa11ef-fe18-45eb-a6b2-4643f99da307|2011|1
+2014|power|Epica|The Quantum Enigma|2fdb33fc-921d-4408-b0f0-da2a0f2f9952|2014|1
+2013|power|Stratovarius|Nemesis|8f28a6b4-c9e3-48e2-aca2-9cc6c9980be3|2013|1
+2015|power heavy|Visigoth|The Revenant King|7b4d21a4-7d41-44c1-bfdf-88c01462d772|2014|1
+2017|power|Unleash the Archers|Apex|bb13cdae-39bd-4a8e-976f-76d0c5b35c06|2017|1
+2014|power thrash|Iced Earth|Plagues of Babylon|d681f584-1504-47a8-a3fa-137aa464f804|2014|1
+2011|prog|Opeth|Heritage|3a050737-01b2-4eea-aaa0-d961020fbe00|2011|1
+2014|prog|Opeth|Pale Communion|d7605e9c-8a96-4a41-9cf6-f45f80de112f|2014|1
+2016|prog|Opeth|Sorceress|8902256f-d9f0-4043-a8f3-2412fb3d3db7|2016|1
+2019|prog|Opeth|In Cauda Venenum|cd725d34-9746-4211-b487-5e8a8b2142cd|2019|1
+2011|prog|Dream Theater|A Dramatic Turn of Events|85791a2b-ce2f-4dcd-96e6-3935420666b9|2011|1
+2019|prog|Dream Theater|Distance Over Time|3d2ef7c3-f13e-4f23-9e83-51ec75023017|2019|1
+2019|prog|Tool|Fear Inoculum|76203bd0-466b-4802-a7ca-9b0097a3f862|2019|1
+2012|prog|Periphery|Periphery II: This Time It's Personal|f1fd6051-a663-4e6a-9305-705f98086d87|2012|1
+2016|prog|Periphery|Periphery III: Select Difficulty|2de1efa9-43de-4ef9-9b4c-042e1a55c908|2016|1
+2013|prog|TesseracT|Altered State|a185cd0e-f9f6-4732-81f1-a383461acac6|2013|1
+2013|prog|Haken|The Mountain|ede19d6a-3d5c-45d9-ba10-7452ae0eb2e9|2013|1
+2016|prog|Haken|Affinity|8ee45ff6-b46c-4693-add2-69c3411135de|2016|0
+2018|prog|Haken|Vector|562d848c-aac2-4cbd-b889-7546c63e6ae5|2018|1
+2013|prog|Leprous|Coal|007c3ce5-dc37-467e-80aa-48ea1d7d1d1e|2013|1
+2015|prog|Leprous|The Congregation|3e4645a3-310e-4dd1-8300-1c7271d2edae|2015|1
+2017|prog|Leprous|Malina|deb74e10-3ea8-4da4-843d-3b50a0b76bde|2017|1
+2012|prog core|Between the Buried and Me|The Parallax II: Future Sequence|8b09f173-6bd4-41f5-9920-403dccf66a95|2012|1
+2011|prog|Animals as Leaders|Weightless|35bc29f9-4c09-4d07-840a-01ce4b2d4865|2011|1
+2014|prog|Animals as Leaders|The Joy of Motion|51a74d4a-f21d-49de-8655-5335dafd82d2|2014|1
+2012|prog|Devin Townsend Project|Epicloud|49dc3c55-5eea-474c-8f17-315ff6f1adae|2012|1
+2012|prog|Meshuggah|Koloss|f89aba8a-b5a0-47b8-a224-99f9b559c835|2012|1
+2016|prog|Meshuggah|The Violent Sleep of Reason|1517a44c-9984-42b0-b3e2-e86fd9a76972|2016|1
+2019|prog|Soen|Lotus|185014d7-0595-4679-9942-08d3440e8137|2019|1
+2013|prog core|Protest the Hero|Volition|ea166f2c-523d-4ed2-8542-16f9f50bd890|2013|1
+2012|prog death|Ne Obliviscaris|Portal of I|7c1c9261-4961-4cff-9faa-8f2597174928|2012|1
+2014|core|Architects|Lost Forever // Lost Together|b07d09d3-d8f9-44a2-9c14-5fc1897cf9dd|2014|1
+2016|core|Architects|All Our Gods Have Abandoned Us|aaf1877b-1c16-404e-991d-096b75ee9807|2016|1
+2018|core|Architects|Holy Hell|0810452a-10ba-4069-b6c0-f0fb30814aae|2018|1
+2013|core|Bring Me the Horizon|Sempiternal|f0c8edf8-26a7-4425-9ce9-82b00e90669a|2013|1
+2015|core nu|Bring Me the Horizon|That's the Spirit|78113c03-d7dc-4200-91f0-5b20088e403d|2015|1
+2010|core|Parkway Drive|Deep Blue|a05f5473-7bfe-4258-9e92-fe05c5196679|2010|1
+2012|core|Parkway Drive|Atlas|f87ef4ff-bf55-4cba-8556-c76f7cd68a76|2012|1
+2015|core|Parkway Drive|Ire|a2c8333b-cd2b-41a5-8cd2-fa4948762db8|2015|1
+2018|core heavy|Parkway Drive|Reverence|3225c7e2-4fd1-4d85-b4c2-61847cef9136|2018|1
+2013|core|Killswitch Engage|Disarm the Descent|39e28a85-1c93-4b14-889f-64966d05b492|2013|1
+2016|core|Killswitch Engage|Incarnate|1dd0ecff-1c2f-4ede-97bc-3a90cae140c3|2016|1
+2019|core|Killswitch Engage|Atonement|cc0964a8-05c0-4d02-a178-1c7efbad1607|2019|1
+2011|core|August Burns Red|Leveler|79e8d6d0-7cb3-4a5a-96d0-7a5c6df22dcb|2011|1
+2013|core|August Burns Red|Rescue & Restore|347ec66c-2d53-4210-bad0-a613645efac3|2013|1
+2010|core prog|The Dillinger Escape Plan|Option Paralysis|d08f7870-2ce2-4635-9ca0-65c6f8592d57|2010|1
+2013|core prog|The Dillinger Escape Plan|One of Us Is the Killer|f9afd658-5282-480b-91d4-aa0108a6ccd8|2013|1
+2016|core prog|The Dillinger Escape Plan|Dissociation|18c29ff8-b6bc-497e-a362-683978c2cdd2|2016|1
+2012|core|Converge|All We Love We Leave Behind|86037f34-72c6-4ad9-8072-f20bb839f78d|2012|1
+2017|core|Converge|The Dusk in Us|fe96f1f4-5c9f-4a39-a9d1-181dd3f4c54b|2017|1
+2014|core|Code Orange|I Am King|7f6538af-c9b9-4d48-8348-907e929eff71|2014|1
+2017|core industrial|Code Orange|Forever|c950a1c1-0ff8-4ffb-8298-778ee63238da|2017|1
+2012|core|Every Time I Die|Ex Lives|b765e3e0-c346-4c0d-ba86-012a9fa7c118|2012|1
+2016|core|Every Time I Die|Low Teens|9114af91-c114-4af8-ae87-81c6fea367df|2016|1
+2016|core|Knocked Loose|Laugh Tracks|1f63c50a-110b-40e4-b555-28c7e53a357a|2016|1
+2019|core|Knocked Loose|A Different Shade of Blue|cc75404d-4302-427e-9a84-958e2a34ba6a|2019|1
+2011|core thrash|Trivium|In Waves|61fa3366-d19f-4e36-aeb6-5bd36edaf898|2011|1
+2017|core thrash|Trivium|The Sin and the Sentence|0b9cf904-2c08-4739-b552-21f5d6986350|2017|1
+2015|core|Northlane|Node|27ad5a28-05e2-48c0-a9fe-5bed7123f8e3|2015|1
+2014|core|Beartooth|Disgusting|114affde-341e-4c9c-a283-1a5a5e608bc8|2014|1
+2019|industrial|Rammstein|Rammstein|e4d39d2e-9420-4007-881a-9b5bc23944e0|2019|1
+2012|industrial thrash|Ministry|Relapse|ab700a77-08bc-4e77-b28a-51cb0cb6d940|2012|1
+2018|industrial thrash|Ministry|AmeriKKKant|1e98f381-7be0-449e-b168-3aa5232ebc73|2018|1
+2010|industrial groove|Fear Factory|Mechanize|3a6c3bb4-60f5-4840-8809-13cfc0e8cca8|2010|1
+2012|industrial groove|Fear Factory|The Industrialist|563fd1ed-5f0c-4e3b-b84d-ac8a07703a7e|2012|1
+2015|industrial groove|Fear Factory|Genexus|ce3fe3e8-8d76-4ab9-bbc2-af8e00afefab|2015|1
+2012|industrial|Marilyn Manson|Born Villain|f645671e-e21f-49a6-9152-5fc57c5b6bb1|2012|1
+2015|industrial|Marilyn Manson|The Pale Emperor|07192b2b-a27f-4fe4-b03c-5597400a1b0c|2014|1
+2017|industrial|Marilyn Manson|Heaven Upside Down|7000fa0a-81eb-4238-af55-916e774b03a2|2017|1
+2013|industrial|Nine Inch Nails|Hesitation Marks|5abc64d9-2699-4f26-82cb-87ed127f42eb|2013|1
+2014|industrial sludge|Godflesh|A World Lit Only by Fire|daad3712-1884-40f5-b75e-f88efdc79880|2014|1
+2017|industrial sludge|Godflesh|Post Self|fcd5e460-f3bf-4bd9-8a78-a7f1fd858310|2017|1
+2013|industrial groove|Rob Zombie|Venomous Rat Regeneration Vendor|fdf3ac3d-d0f7-4fa8-a64f-944d3146b1aa|2013|1
+2018|industrial|Author & Punisher|Beastland|5e2dff18-8ef3-428c-9024-612bf92af51e|2018|1
+2015|industrial|Lindemann|Skills in Pills|cd5418a2-0360-4383-91fd-6a108f27f07f|2015|1
+2019|industrial|3Teeth|Metawar|b8ab4db7-2eed-448f-bf00-bfc1c3405a28|2019|1
+2010|heavy|Ghost|Opus Eponymous|929528f5-dc81-4e1a-bfdd-aae2842c52d2|2010|1
+2013|heavy|Ghost|Infestissumam|e271f07e-8478-4c0e-9613-3a89800da193|2013|1
+2015|heavy|Ghost|Meliora|02be3272-739c-46a4-9668-1d7dab9cc17e|2015|1
+2018|heavy|Ghost|Prequelle|1f25d940-89e2-4813-a86f-955b0e99c391|2018|1
+2010|heavy|Iron Maiden|The Final Frontier|1ba23598-98e6-4fce-b26f-3cf076c14a12|2010|1
+2015|heavy|Iron Maiden|The Book of Souls|2220348e-c3f7-4da7-9cad-d84530077234|2015|1
+2014|heavy|Judas Priest|Redeemer of Souls|289cd041-e5fb-4cbe-8a8c-608d95281bd4|2014|1
+2018|heavy|Judas Priest|Firepower|9a88237d-083c-41a3-ba99-7451bdd78115|2018|1
+2013|heavy doom|Black Sabbath|13|5cbae3a0-6d55-497b-97b3-6c30a3264313|2013|1
+2013|heavy|Enforcer|Death by Fire|b283830f-cce1-48b8-bd96-5cab0aeb441a|2013|1
+2015|heavy|Night Demon|Curse of the Damned|b3b910ac-d1c6-4323-a0f9-df2d71628381|2015|1
+2013|heavy|Satan|Life Sentence|d3e28a5e-2e03-4bd1-878c-360658c1bf77|2013|1
+2015|heavy|Saxon|Battering Ram|3934ecdc-c21a-4997-84f3-2aec216fd3ef|2015|1
+2013|heavy|Volbeat|Outlaw Gentlemen & Shady Ladies|a3ae34bf-0fb2-4edc-9708-c058b0fd0126|2013|1
+2010|heavy|Avenged Sevenfold|Nightmare|fe4373ed-5e89-46b3-b4c0-31433ce217df|2010|1
+2013|heavy|Avenged Sevenfold|Hail to the King|46303229-3ef4-480d-b648-a78e1c64c911|2013|1
+2015|heavy|Motörhead|Bad Magic|37d8c756-b81f-45ed-9c74-e6b28a34c285|2015|1
+2010|heavy|Accept|Blood of the Nations|596055b0-973e-467e-9e6f-881696a06e0b|2010|1
+2014|heavy|Accept|Blind Rage|61712528-b874-415a-b338-67fc1bb62d1e|2013|1
+2016|heavy power|Eternal Champion|The Armor of Ire|f8b9cd89-561a-4635-9306-62f98c2fc2a7|2016|1
+2015|heavy black|Tribulation|The Children of the Night|35d35ef9-ff2c-4e48-b340-fbcae703eb27|2015|1
+2021|heavy|Iron Maiden|Senjutsu|542a86ba-fcdf-4133-99e3-07a462743162|2021|1
+2024|heavy|Judas Priest|Invincible Shield|21ec2311-2d78-4b60-9e4d-bbc696c1c2fa|2024|1
+2022|heavy|Ghost|Impera|e828c3f0-b766-4c25-9c23-067095165a5d|2022|1
+2025|heavy|Ghost|Skeletá|84108766-e00f-49c3-80d7-b0b8c27b4e54|2025|1
+2020|heavy|Ozzy Osbourne|Ordinary Man|505fd778-3d7b-473a-bce9-c2b286f3ee32|2020|1
+2022|heavy|Ozzy Osbourne|Patient Number 9|04773d95-c015-4ed3-a114-021391c6af7a|2022|1
+2023|heavy thrash|Metallica|72 Seasons|a0b7b436-94db-4df6-8c5f-bc0e5932a90e|2023|1
+2021|heavy groove|Black Label Society|Doom Crew Inc.|af3f17ca-a559-4277-b447-00038a7c0e0b|2021|1
+2022|heavy|Saxon|Carpe Diem|b2bd2e31-bbe8-4686-8650-97bd9d9ddd78|2022|1
+2021|heavy|Volbeat|Servant of the Mind|c9abf8f8-4340-436f-b7c8-0516ceb4b581|2021|1
+2023|heavy prog|Avenged Sevenfold|Life Is But a Dream…|b0fabeaa-856c-464a-b926-ae6e18e1ff95|2023|1
+2021|heavy|Unto Others|Strength|4502b8d8-0c4a-4277-bff8-201ee1980389|2021|1
+2020|heavy power|Eternal Champion|Ravening Iron|69ad2da5-24d6-4dc4-9a43-13bcbab61615|2020|1
+2022|thrash|Kreator|Hate Über Alles|4e54edd8-256e-4870-9bc7-4abda4695fce|2022|1
+2020|thrash|Testament|Titans of Creation|c7f1ac46-b135-474a-95e6-c89bd085c6dc|2020|1
+2025|thrash|Testament|Para Bellum|7fee828a-ceaa-46e2-b2fe-db86540d8eb0|2025|1
+2022|thrash|Megadeth|The Sick, the Dying… and the Dead!|70b5b83b-8817-4cf3-8248-ec9ced2213e2|2022|1
+2021|thrash|Exodus|Persona Non Grata|88a3f988-dc40-4dab-b63b-27b9ff067834|2021|1
+2020|thrash|Havok|V|5e8fdf14-2349-49ba-aa02-81a90e362970|2020|1
+2022|thrash|Municipal Waste|Electrified Brain|871dce84-ad24-4223-9df7-0024ca48a4af|2022|1
+2020|thrash|Sodom|Genesis XIX|188dc909-0ac6-4629-9e60-245a87671b6d|2020|1
+2020|thrash|Warbringer|Weapons of Tomorrow|40181aff-507e-4d6e-848f-86e164790898|2020|1
+2021|thrash core|Enforced|Kill Grid|6c2a4bfc-ef22-4fe1-87d1-8af37343415a|2021|1
+2023|thrash|Overkill|Scorched|b60a6b0b-00a1-4245-92f9-4dde35e6a29f|2023|1
+2022|thrash|Destruction|Diabolical|dfad4ea6-3be8-4bda-991d-13a5f5491b39|2022|1
+2020|thrash|Heathen|Empire of the Blind|41f08369-80bd-4f1c-924d-da0298adfaeb|2020|1
+2023|thrash black|Hellripper|Warlocks Grim & Withered Hags|8f67b83e-cc42-4d65-924f-177b0b47ecec|2023|1
+2024|death prog|Blood Incantation|Absolute Elsewhere|25267682-bdfc-435a-b6a7-89c266f7d0e8|2024|1
+2021|death prog groove|Gojira|Fortitude|80f680f2-7aeb-4b30-a40b-e6c1e06a010c|2021|1
+2021|death|Cannibal Corpse|Violence Unimagined|130ef8f7-04e9-4555-94f0-3f9a87071740|2021|1
+2023|death|Cannibal Corpse|Chaos Horrific|ad3ab04c-923a-42c1-b2f9-30eb9f8cde43|2023|1
+2021|death|Carcass|Torn Arteries|07d37eb4-5cc3-4aea-94b5-cb8ed35ccbe4|2021|1
+2020|death|Undeath|Lesions of a Different Kind|ecd5c836-2f7c-4a19-ab8f-07d6870fa9bf|2020|1
+2022|death|Undeath|It's Time…to Rise From the Grave|c3fefa72-7a38-4f32-ab53-a10aa8b05ce1|2022|1
+2021|death|Frozen Soul|Crypt of Ice|1b32ab01-c5fe-43f4-9419-6e3b2b338395|2021|1
+2023|death|Tomb Mold|The Enduring Spirit|cd3e5dfb-acca-4856-80f6-2e095ac3270d|2023|1
+2021|death|Sanguisugabogg|Tortured Whole|f8e3450f-6637-461b-ace0-522ea0622017|2021|1
+2020|death prog|Ulcerate|Stare Into Death and Be Still|26f435b7-3092-41c9-8c41-85f95c86d7b8|2020|1
+2024|death prog|Ulcerate|Cutting the Throat of God|c302ec77-589f-462f-b6b3-d63508886978|2024|1
+2020|death black prog|Imperial Triumphant|Alphaville|501d40fa-0ca1-41e9-9da3-696402f5d1e5|2020|1
+2022|death black prog|Imperial Triumphant|Spirit of Ecstasy|a9a50fe3-628b-40c1-9dd7-1bef06f04c25|2022|1
+2023|death|Obituary|Dying of Everything|fb7d8b0e-a3d9-437b-b26c-408ba430aa17|2023|1
+2023|death|Dying Fetus|Make Them Beg for Death|9e50ee51-1d43-4c6d-bd90-8964b0a42a6c|2023|1
+2024|death|The Black Dahlia Murder|Servitude|750ac5a0-7cca-4532-a479-65b748964259|2024|1
+2022|death|Amon Amarth|The Great Heathen Army|c84f7d23-750c-423c-968e-d82a4195414e|2022|1
+2020|death|Dark Tranquillity|Moment|54405528-7479-47dc-bf39-eb740b9c74a3|2020|1
+2024|death|Dark Tranquillity|Endtime Signals|5800eabd-0bf7-4f9b-9070-603395692219|2024|1
+2021|death prog|Rivers of Nihil|The Work|e0dedc34-a675-4fb2-b558-fb03cdb01a32|2021|1
+2023|death|Cattle Decapitation|Terrasite|5954e7cb-0633-4621-9f4b-3ff97c49764d|2023|1
+2024|death|Gatecreeper|Dark Superstition|8c07bcb1-53c2-40e6-89b0-720bcf0e806e|2024|1
+2022|death|Bloodbath|Survival of the Sickest|cf455df0-06aa-4903-8bc2-fed5140afabc|2022|1
+2023|death core|200 Stab Wounds|Manual Manic Procedures|6164ae93-b5aa-4d06-b85a-1e86faba8e81|2024|1
+2021|death prog|Obscura|A Valediction|3c2ad5bb-9194-4dd1-8401-a865db7f05fb|2021|1
+2023|death prog|Ne Obliviscaris|Exul|5467e760-32ea-471d-8a10-eb6f2e3c7a91|2023|1
+2022|death black|Behemoth|Opvs Contra Natvram|9e9ded6d-8578-45e5-bbea-ab96b9f09bf9|2022|1
+2021|black|Deafheaven|Infinite Granite|6d015238-53a5-4dc6-8c83-0afd2b6e350a|2021|1
+2025|black|Deafheaven|Lonely People With Power|f88055a1-f78c-4344-8765-e4ec22eb8bf8|2025|1
+2021|black|Wolves in the Throne Room|Primordial Arcana|0b576080-7ac7-48d8-b09a-db9d683c21dd|2021|1
+2021|black|Spectral Wound|A Diabolic Thirst|bdc50adf-bfe2-447c-ac0f-1cd899abed49|2021|1
+2022|black|Blackbraid|Blackbraid I|106174f6-4392-48a0-8d4a-2f704a1380f7|2023|1
+2023|black|Blackbraid|Blackbraid II|106174f6-4392-48a0-8d4a-2f704a1380f7|2023|1
+2021|black|Panopticon|...And Again Into the Light|45c6b2ba-ddb2-4c72-87bd-81dcc082ece9|2021|1
+2022|black|Watain|The Agony & Ecstasy of Watain|68ac63ae-5b03-4acf-a7ae-30049d543798|2022|1
+2020|black|Uada|Djinn|e4fff022-3c40-431b-864b-b74281c356cf|2020|1
+2024|black|Alcest|Les Chants de l'Aurore|ccab6913-ea21-472f-97a9-530a49203687|2024|1
+2020|black|Wayfarer|A Romance With Violence|884a91e9-23dd-44b3-9e19-e78199640543|2020|1
+2022|black|Gaerea|Mirage|a8d1011f-519d-4a7c-b433-6ac3c0c6c7c9|2022|1
+2021|black|Darkthrone|Eternal Hails……|43fd1f55-35a0-413d-856f-2939b7ecae46|2021|1
+2022|black|Darkthrone|Astral Fortress|cd62895e-6f2b-435a-bf2d-97bb6521c70b|2022|1
+2023|black|Immortal|War Against All|93728ce8-c3f8-4b98-9ae4-7a9e02422540|2023|1
+2023|black|Dawn Ray'd|To Know the Light|fcd05e52-fb30-49b9-aae3-f9c3862e0587|2023|1
+2020|doom|Pallbearer|Forgotten Days|c8379f30-cf62-474c-b881-63951b22e4ad|2020|1
+2024|doom|Pallbearer|Mind Burns Alive|da144569-a130-46ac-9cd8-d5246e74e0aa|2024|1
+2021|doom|Khemmis|Deceiver|504afc09-8d0c-430a-a401-1010ee11a72d|2021|1
+2020|doom heavy|Spirit Adrift|Enlightened in Eternity|02c68462-cd8b-45d3-8f63-44024e9810e8|2020|1
+2023|doom|Bell Witch|Future's Shadow Part 1: The Clandestine Gate|eb6771ae-0706-44be-b431-f72ef68b107f|2023|1
+2022|doom|Candlemass|Sweet Evil Sun|da6b86ee-cb57-4e1b-b67c-27b8150a758a|2022|1
+2020|doom death|Paradise Lost|Obsidian|c7632b5e-fa15-4a8f-b388-19541c16ed27|2020|1
+2021|doom heavy|Green Lung|Black Harvest|87efb164-f08d-4f4e-8188-1324ac22428b|2021|1
+2022|doom|Messa|Close|99300f0d-1199-46f1-9604-9bf8c06f223b|2022|1
+2021|doom sludge|King Woman|Celestial Blues|e25ce243-f1c3-4ff0-897c-afccd35eb6e1|2021|1
+2020|doom death|My Dying Bride|The Ghost of Orion|7c90559f-b813-4cef-9ce2-9f020819e3af|2020|1
+2021|doom death|Swallow the Sun|Moonflowers|8000d009-9522-4365-b855-6cf34ef0fe0b|2021|1
+2023|doom prog|Katatonia|Sky Void of Stars|a2092fd0-8360-4a22-b485-e32b485ee439|2023|1
+2024|doom heavy|Crypt Sermon|The Stygian Rose|3abdc9c7-1ebd-471e-b138-41ea261143b4|2024|1
+2022|sludge doom|Mizmor & Thou|Myopia|8a0d4267-c964-4c3b-853b-9cc0719f3dae|2022|1
+2021|sludge prog|Mastodon|Hushed and Grim|aa4960fb-3b27-4d68-b68a-0143fa5f84f0|2021|1
+2024|sludge|High on Fire|Cometh the Storm|28f4859e-ba0a-4317-a825-723ee3db3221|2024|1
+2023|sludge|Baroness|Stone|c5067ad6-6b62-4455-bf87-2b4d00ec39fd|2023|1
+2022|sludge industrial|Chat Pile|God's Country|dc5482e8-24e5-4f23-b982-3070060f22ae|2022|1
+2024|sludge doom|Thou|Umbilical|8717fff1-107a-4840-a669-468702f946a9|2024|1
+2020|sludge doom|Primitive Man|Immersion|a99c80c8-ad58-43e2-b7a0-eaa2d0c2c660|2020|1
+2022|sludge|Cult of Luna|The Long Road North|4642bdd7-d026-441d-b575-5aef606fee5d|2022|1
+2023|sludge|Inter Arma|New Heaven|763aa505-f31c-421e-839b-32782a4486db|2024|1
+2021|sludge|Red Fang|Arrows|967ecfdf-d15c-4f2f-9bca-2c39360c63a9|2021|1
+2022|sludge|Crowbar|Zero and Below|5e1f93bd-a398-421b-8a13-0f282c939aba|2022|1
+2021|sludge|Eyehategod|A History of Nomadic Behavior|5b9c100f-b8fe-43a0-9120-6d861fff441c|2021|1
+2022|sludge doom|Elder|Innate Passage|a996dc93-d35f-4a2e-94fa-79e552817124|2022|1
+2020|sludge heavy|Kvelertak|Splid|a60d43f7-2783-47b7-91a6-c62c4b6e4c7d|2020|1
+2023|sludge heavy|Kvelertak|Endling|cb366db3-a88c-4d29-a30f-aa24e61c2958|2023|1
+2021|sludge doom|Monolord|Your Time to Shine|022263ae-1151-4f82-b21c-0af44df8af5f|2021|1
+2022|sludge|Mantar|Pain Is Forever and This Is the End|2b6544da-7448-40f1-a567-e853a0849818|2022|1
+2022|sludge doom|Conan|Evidence of Immortality|db45760e-a8eb-4290-8d15-961497941766|2022|1
+2022|power|Sabaton|The War to End All Wars|25d3f2f9-837e-4e0b-8132-4d660cb235e4|2022|1
+2025|power|Sabaton|Legends|d3a4af03-80b0-4bc3-8949-b9d1de9b88a1|2025|1
+2021|power|Powerwolf|Call of the Wild|c268f040-6f4b-4a0e-93e9-88a39366875c|2021|1
+2024|power|Powerwolf|Wake Up the Wicked|ca0d7fa4-2e42-4902-a7e1-7a26f63ca307|2024|1
+2020|power|Nightwish|Human. :II: Nature.|887ec003-1f01-4c74-b28e-a81045eea113|2020|1
+2024|power|Nightwish|Yesterwynde|eced6fed-ad42-444d-9983-18a5517fc55f|2024|1
+2022|power|Blind Guardian|The God Machine|9b65d5b6-edca-4c53-9f12-3da6190045cb|2022|1
+2021|power|Helloween|Helloween|d0bcd889-f250-41e9-b8ae-4659177dd4f7|2021|1
+2024|power|DragonForce|Warp Speed Warriors|db5b4b22-43a1-45ba-a490-2c5ec341a7b2|2024|1
+2020|power|Unleash the Archers|Abyss|bbca8a0e-d903-4cee-8b89-e4e40ba86531|2020|1
+2024|power|Unleash the Archers|Phantoma|536dc873-3ec2-4cc6-8008-5d2e7fbd006b|2024|1
+2023|power|Gloryhammer|Return to the Kingdom of Fife|e58e3a4a-5072-48a4-b25f-3c12a40df342|2023|1
+2023|power prog|Kamelot|The Awakening|076fe254-b181-49d0-a29c-a5d49ac8c984|2023|1
+2022|power|Avantasia|A Paranormal Evening With the Moonflower Society|535029c0-1af3-40e3-a341-248f1c563eb8|2022|1
+2021|power|Epica|Ωmega|4839916e-0219-48c2-9b37-ca5ea8f6aa56|2021|1
+2025|power|Epica|Aspiral|b465e11f-6688-4e1d-b09a-e088fd98c4eb|2025|1
+2022|power|HammerFall|Hammer of Dawn|2ff474e0-8bc4-40a1-ab09-300a07d7745d|2022|1
+2022|power|Stratovarius|Survive|34c56728-d842-4f3b-a2b6-2df742d37118|2022|1
+2024|power|Sonata Arctica|Clear Cold Beyond|ec0d24b5-13b2-4fb1-9d2b-27e141297844|2024|1
+2021|power|Seven Spires|Gods of Debauchery|8797b7eb-ba1b-4957-b6a1-4fa65c266429|2021|1
+2024|prog|Opeth|The Last Will and Testament|dfddf6d4-06ca-4e09-abdb-40d1eb79b910|2024|1
+2021|prog|Dream Theater|A View From the Top of the World|eb48fa61-985e-4020-97d7-0f1dfe7fc109|2021|1
+2025|prog|Dream Theater|Parasomnia|d8dd9dab-00ea-4814-b4d4-ca16f8779cc8|2025|1
+2020|prog|Haken|Virus|2bd8d6f5-8eec-4a39-8f7d-1c26c8ee248f|2020|1
+2023|prog|Haken|Fauna|ceacae43-41bb-4adf-b091-1c3e3cfdb223|2023|1
+2021|prog|Leprous|Aphelion|d72518d3-631a-4ef6-8eb4-cdf51ea0b2ab|2021|1
+2024|prog|Leprous|Melodies of Atonement|cc85e277-7bbc-4da5-9ee9-b0b4d40f025d|2024|1
+2023|prog|Periphery|Periphery V: Djent Is Not a Genre|8a1ca41e-95bb-4946-84b1-e4e3ec5ebde5|2023|1
+2023|prog|TesseracT|War of Being|75994db4-5815-4b2b-849c-727c3467d24d|2023|1
+2021|prog core|Between the Buried and Me|Colors II|adf5f8d1-a33e-4da8-b55b-39f67680050a|2021|1
+2021|prog|Soen|Imperial|64913fd5-fbfc-4110-b435-725b21f62117|2021|1
+2023|prog|Soen|Memorial|4d87cd29-85df-479c-a1ca-d821f792339b|2023|1
+2020|prog|Caligula's Horse|Rise Radiant|7e184166-fe76-4dea-b81a-366bcc99db37|2020|1
+2024|prog|Caligula's Horse|Charcoal Grace|5abb3868-7bd9-43d5-8fed-294873f210a6|2024|1
+2022|prog|Animals as Leaders|Parrhesia|eb7c1504-7f86-4f12-90e1-0aa0a827ba0e|2022|1
+2022|prog|Devin Townsend|Lightwork|56e0dd6f-1e18-479c-a591-4466f6c48466|2022|1
+2022|prog|Meshuggah|Immutable|15e177a5-1c4b-405e-926a-d4f8a334a54c|2022|1
+2021|prog death|Cynic|Ascension Codes|fafd9fd5-6af0-4514-92d1-8fc679704fe3|2021|1
+2021|prog|Vola|Witness|2f32b504-9689-4ecc-ab5a-af0e65ebca66|2021|1
+2021|prog nu|Sleep Token|This Place Will Become Your Tomb|ac9d3d59-77dd-4af2-9e1e-5740abbc3a23|2021|1
+2023|prog nu|Sleep Token|Take Me Back to Eden|cffd54b1-1ce7-4a99-a0a9-3947a08137df|2023|1
+2020|prog industrial|Igorrr|Spirituality and Distortion|0a5e7478-7673-42eb-a960-28129a050eff|2020|1
+2020|groove|Lamb of God|Lamb of God|27dbe512-f2b0-4519-b8ca-7e45ae06c100|2020|1
+2022|groove|Lamb of God|Omens|b20ac400-041a-4025-aa33-bab8479cc545|2022|1
+2021|groove prog|Jinjer|Wallflowers|d969fe93-5c30-4469-9472-2ed1b16d5343|2021|1
+2025|groove prog|Jinjer|Duél|7eacc015-c103-4b6a-ae24-2acde13595b4|2025|1
+2022|groove thrash|Machine Head|Of Kingdom and Crown|fb04af6b-6cf7-4146-9e9c-87beb9338f08|2022|1
+2025|groove thrash|Machine Head|Unatøned|f9e94d85-57f0-44d7-bd39-72052acefbe8|2025|1
+2020|groove thrash|Sepultura|Quadra|0cbc9d22-1a97-4930-8a95-b936cdaaa751|2020|1
+2020|groove|Five Finger Death Punch|F8|7fc1a0f1-45b9-4fbd-bcb3-9fc1bced09e1|2020|1
+2022|groove|Five Finger Death Punch|AfterLife|c28921f4-9068-4900-8b6b-788e2c420080|2022|1
+2020|groove|DevilDriver|Dealing With Demons I|06121c72-2e2f-409b-89a4-cc87bccf137b|2020|1
+2022|groove|Soulfly|Totem|757ee271-0562-44f6-82ba-d92642ac2efa|2022|1
+2022|groove core|Fit for an Autopsy|Oh What the Future Holds|0e3dc084-b315-4a25-bbb2-d9b47537e881|2022|1
+2020|groove core|Hatebreed|Weight of the False Self|b1512b0a-9614-4308-b3e5-f9e74ae1c127|2020|1
+2022|nu|Slipknot|The End, So Far|3a2b2278-3e35-44c5-a1c2-f71bc59226a1|2022|1
+2022|nu|Korn|Requiem|d8bb23aa-1955-43bc-a60c-c767f65d3f54|2022|1
+2020|nu|Deftones|Ohms|cc2075d9-3f46-4d74-82a9-31492bf2a7e4|2020|1
+2025|nu|Deftones|Private Music|5e9a3ca5-82ce-47da-9409-83f6f953b4a2|2025|1
+2024|nu|Linkin Park|From Zero|a3159fb4-2ad3-4678-ba51-36fbc8b8430d|2024|1
+2020|nu core|Tallah|Matriphagy|a1330d69-c04c-4e5a-8636-9974980e66a5|2020|1
+2020|nu industrial|Static-X|Project: Regeneration, Vol. 1|48d83d3d-6c86-4ca0-bd43-e0f462f68504|2020|1
+2022|nu|Disturbed|Divisive|ad6cb8a1-db27-4788-aaa9-390f59f67226|2022|1
+2021|nu|Limp Bizkit|Still Sucks|39bcad85-bc28-4b8c-beec-04573bdf4dc9|2021|1
+2022|nu|Papa Roach|Ego Trip|d61cd8a3-528c-44ff-a39f-321c79ba1f8c|2022|1
+2020|nu core|Bring Me the Horizon|Post Human: Survival Horror|2d1d9561-4c16-41d4-8234-dfe30c6334eb|2020|1
+2023|nu|Kim Dracula|A Gradual Decline in Morale|7057a9fb-cd8d-49b0-b2d7-42acc0d39798|2023|1
+2020|nu core|Loathe|I Let It In and It Took Everything|fd2f5291-c761-4485-a4e5-c1b26072c64c|2020|1
+2021|nu|Tetrarch|Unstable|f608d82a-f5f8-44e2-926b-71acbac3023f|2021|1
+2021|core prog|Spiritbox|Eternal Blue|68ee0e21-a7c2-467d-8808-fd38fec2ffb8|2021|1
+2025|core prog|Spiritbox|Tsunami Sea|054c3793-9de7-46a0-b4d6-7469dd6c4f29|2025|1
+2024|core|Knocked Loose|You Won't Go Before You're Supposed To|a78e5c5c-5475-4b5d-9db0-0eac670d491a|2024|1
+2021|core|Architects|For Those That Wish to Exist|4a0f80ce-b194-4cb1-b601-5c09041b7643|2021|1
+2022|core|Architects|The Classic Symptoms of a Broken Spirit|b71b865c-08ae-45db-994e-1fa580b1ea35|2022|1
+2025|core|Architects|The Sky, the Earth & All Between|4b40ab66-fbbe-4434-8514-287b3408f15d|2025|1
+2024|core nu|Bring Me the Horizon|Post Human: Nex Gen|96a7fe39-114f-4102-aba8-6387748553ce|2024|1
+2022|core|Parkway Drive|Darker Still|72185e1e-a156-4f05-b8f1-3817c1684288|2022|1
+2020|core|Polaris|The Death of Me|29365264-2d73-4895-aa14-dca03b0765fa|2020|1
+2023|core|Polaris|Fatalism|48ee000c-2591-49c8-aee0-5d3134c2746c|2023|1
+2025|core|Killswitch Engage|This Consequence|6ff0ce32-df86-4422-ac82-f37de5ef69ba|2025|1
+2020|core|August Burns Red|Guardians|cd574a06-8314-4711-987c-296cdcc0edd7|2020|1
+2023|core|August Burns Red|Death Below|738c554b-7d4d-4328-a70b-223a43a71d6f|2023|1
+2021|core doom|Converge|Bloodmoon: I|94a4b34d-6160-47f7-a869-56c149507493|2021|1
+2021|core|Every Time I Die|Radical|62e8bfd9-8b7e-4f03-9c44-cd1b8a2ff9d5|2021|1
+2022|core|Counterparts|A Eulogy for Those Still Here|a958272c-62b6-4d7d-ae7a-ef40c416c57d|2022|1
+2023|core|Currents|The Death We Seek|bb6ba0e2-d704-41f2-a94f-972f380c02c7|2023|1
+2021|core thrash|Trivium|In the Court of the Dragon|b9f9612d-fb59-4bf3-b0dc-d6bd3aa76245|2021|1
+2020|core thrash|Trivium|What the Dead Men Say|6ae53f0e-0436-475a-8406-2b422d4adcd9|2020|1
+2021|core|Wage War|Manic|1efab39b-ee43-4af3-b1aa-d2969147f975|2021|1
+2023|core|Invent Animate|Heavener|27adbee7-14df-4b57-b48c-f71ceee15283|2023|1
+2022|core|Northlane|Obsidian|2b900db3-f226-43e9-ae56-dbe34f4fc91f|2022|1
+2024|core prog|Erra|Cure|207c3c2e-4aa3-490b-a730-d0a86d0f8a8c|2024|1
+2022|core|Motionless in White|Scoring the End of the World|c3e2dc06-b96a-4df9-aefd-8944776afe51|2022|1
+2021|core|Ice Nine Kills|Welcome to Horrorwood: The Silver Scream 2|685da625-a1cb-4f70-9c49-62974ff75299|2021|1
+2022|industrial|Rammstein|Zeit|071fd9df-1946-4c05-a875-893cdf89f3d0|2022|1
+2021|industrial thrash|Ministry|Moral Hygiene|4a7d5d4f-7451-4217-a156-60c03740fbae|2021|1
+2024|industrial thrash|Ministry|HOPIUMFORTHEMASSES|502fa0fa-49ab-4413-b86a-eddf3189192a|2024|1
+2020|industrial core|Code Orange|Underneath|b047b25c-d99b-47d2-ad08-6f15ce21be5e|2020|1
+2023|industrial core|Code Orange|The Above|9485b55f-da9e-4875-a69b-be8b6af27f67|2023|1
+2022|industrial sludge|Author & Punisher|Krüller|caf11efc-168b-4b1a-813b-6859478ce0a0|2022|1
+2021|industrial groove|Fear Factory|Aggression Continuum|5ddffd10-2908-4915-88e4-2edbfdf29e4c|2021|1
+2020|industrial|Marilyn Manson|We Are Chaos|1ae55e74-3712-4089-994e-67a107e4c544|2020|1
+2024|industrial|Marilyn Manson|One Assassination Under God, Chapter 1|0c2fc27f-e9c1-4cfc-9151-e09fda34ae85|2024|1
+2023|industrial|3Teeth|EndEx|ae0cd6d1-4e35-4649-a113-bd2e26177e20|2023|1
+2021|industrial groove|Rob Zombie|The Lunar Injection Kool Aid Eclipse Conspiracy|ec67be75-8cef-4031-950c-5266cb043276|2021|1
+2023|industrial sludge|Godflesh|Purge|8fb3cef0-923e-4ac9-940a-124764a5eafd|2023|1
+2025|industrial prog|Igorrr|Amen|f52645a9-5497-4822-8711-9eae52f74c9b|2025|1
 `;
+/* Row format: year | genres | artist | title [| mbid | mbYear | cover]
+   The last three fields are filled in by tools/precompute.mjs:
+     mbid   MusicBrainz release-group id, or "-" if no studio album matched
+     mbYear first-release year from MusicBrainz (decides the album's decade)
+     cover  1 if the Cover Art Archive has a front cover, else 0
+   Rows without them are looked up in the browser at runtime (slow; rerun the tool). */
 const CATALOG = CATALOG_TEXT.trim().split("\n").map(l => {
-  const [year, genres, artist, title] = l.split("|");
-  return { year: +year, genres: genres.split(" "), artist, title };
+  const [year, genres, artist, title, id, mbYear, cover] = l.split("|");
+  const a = { year: +year, genres: genres.split(" "), artist, title };
+  if (id === "-") a.pre = null;
+  else if (id) a.pre = { id, year: mbYear || year, cover: cover === "1" };
+  return a;
 });
 
 const GENRES = {
@@ -2160,6 +2154,7 @@ function assignWithTray(geom, ids, pairFaces, initialOpen, pOpen, attempts = 400
   return null;
 }
 /* ---------- Game ---------- */
+seedFromPrecomputed();
 let TILE = 116, HALF = 58, DEPTH = 10, PAD = 20;
 /* Phone detection: touch-first device with a small screen. */
 const isPhone = () =>
@@ -2259,9 +2254,15 @@ function render() {
     el.title = coverTitle(c);
     el.tabIndex = 0;
     el.dataset.id = t.id;
-    const img = document.createElement("img");
-    img.src = coverUrl(c.id); img.alt = el.title;
-    el.appendChild(img);
+    if (coverHealth.failed.has(c.id)) el.appendChild(fallbackFace(c));
+    else {
+      const img = document.createElement("img");
+      img.alt = el.title;
+      img.onload = () => coverLoaded(c.id);
+      img.onerror = () => { coverFailed(c.id); img.replaceWith(fallbackFace(c)); };
+      img.src = coverUrl(c.id);
+      el.appendChild(img);
+    }
     board.appendChild(el);
   }
   board.style.width = w + "px";
@@ -2270,6 +2271,27 @@ function render() {
   renderTray();
   $("tilesLeft").textContent = `${alive.size} tiles`;
   $("btnUndo").disabled = !history.length;
+}
+
+/* When a cover image fails, the tile shows the artist and album as text so the
+   game stays playable; if most covers fail, the Cover Art Archive is probably down. */
+const coverHealth = { ok: new Set(), failed: new Set(), warned: false };
+function fallbackFace(c) {
+  const f = document.createElement("div");
+  f.className = "fallback";
+  const a = document.createElement("b"); a.textContent = c.artist;
+  const t = document.createElement("span"); t.textContent = c.title;
+  f.append(a, t);
+  return f;
+}
+function coverLoaded(id) { coverHealth.ok.add(id); }
+function coverFailed(id) {
+  coverHealth.failed.add(id);
+  const f = coverHealth.failed.size, o = coverHealth.ok.size;
+  if (!coverHealth.warned && f >= 6 && f > o) {
+    coverHealth.warned = true;
+    status("The Cover Art Archive isn't responding, so tiles show album names instead. Try Reload covers later.");
+  }
 }
 
 function renderTray() {
@@ -2283,8 +2305,9 @@ function renderTray() {
     if (id !== undefined) {
       const c = covers[tiles[id].face];
       const img = document.createElement("img");
-      img.src = coverUrl(c.id); img.alt = coverTitle(c); img.title = coverTitle(c);
-      slot.appendChild(img);
+      img.alt = coverTitle(c); img.title = coverTitle(c);
+      if (coverHealth.failed.has(c.id)) slot.appendChild(fallbackFace(c));
+      else { img.onerror = () => img.replaceWith(fallbackFace(c)); img.src = coverUrl(c.id); slot.appendChild(img); }
     }
     el.appendChild(slot);
   }
@@ -2953,7 +2976,7 @@ $("btnOverlayUndo").onclick = undo;
 $("btnHint").onclick = hint;
 $("btnShuffle").onclick = reshuffle;
 $("btnUndo").onclick = undo;
-$("btnReload").onclick = () => boot(true);
+$("btnReload").onclick = () => { coverHealth.ok.clear(); coverHealth.failed.clear(); coverHealth.warned = false; boot(true); };
 $("zoomIn").onclick = () => setZoom(zoom + .1);
 $("zoomOut").onclick = () => setZoom(zoom - .1);
 $("zoomFit").onclick = () => autoFit();
@@ -2977,11 +3000,6 @@ async function boot(force = false) {
     const pairsPerAlbum = +$("copiesSel").value / 2;
     if (pool.length * pairsPerAlbum < tiles.length / 2)
       status(`Only ${pool.length} albums for ${filterLabel() || "this filter"}, so some repeat on this board.`);
-    topUpPool(genre, decade, fresh => {
-      if (my !== bootId) return;
-      const have = new Set(covers.map(c => c.id));
-      covers.push(...fresh.filter(e => !have.has(e.id)));   // appended, so faces in play keep their index
-    }).catch(e => console.warn(e));
   } catch (e) {
     console.error(e);
     status(`Couldn't load covers (${e.message}). Use Reload covers to try again.`);
