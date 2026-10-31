@@ -2251,37 +2251,58 @@ function boardSize() {
 
 const coverTitle = c => `${c.artist} — ${c.title}${c.year ? " (" + c.year + ")" : ""}`;
 
-function render() {
+/* Tile elements are created once per deal and kept across moves: a taken tile is hidden, not
+   removed, so its cover is never requested again. (Rebuilding the board used to re-request every
+   cover on every move, and each cover sits behind two uncacheable redirects, so on a cold cache
+   or in Safari the whole board visibly blanked and reloaded.) */
+let tileEls = [], tileElsFor = null;
+function buildBoard() {
   const board = $("board");
   board.innerHTML = "";
-  const alive = aliveSet();
   const { off, w, h } = boardSize();
-  for (const t of tiles) {
-    if (!t.alive) continue;
-    const c = covers[t.face];
+  tileEls = tiles.map(t => {
     const el = document.createElement("div");
-    const covered = t.above.some(i => alive.has(i));
-    el.className = "tile " + (covered ? "blocked covered" : freeWith(t, alive) ? "free" : "blocked sided");
+    el.className = "tile";
     el.style.left = (off + t.x * HALF - t.z * DEPTH) + "px";
     el.style.top = (off + t.y * HALF - t.z * DEPTH) + "px";
     el.style.zIndex = t.z * 10000 + t.y * 100 + t.x;
-    el.title = coverTitle(c);
     el.tabIndex = 0;
     el.dataset.id = t.id;
-    if (coverHealth.failed.has(c.id)) el.appendChild(fallbackFace(c));
-    else {
-      const img = document.createElement("img");
-      img.alt = el.title;
-      img.onload = () => coverLoaded(c.id);
-      img.onerror = () => { coverFailed(c.id); img.replaceWith(fallbackFace(c)); };
-      img.src = coverUrl(c.id);
-      el.appendChild(img);
-    }
+    setFace(el, t);
     board.appendChild(el);
-  }
+    return el;
+  });
+  tileElsFor = tiles;
   board.style.width = w + "px";
   board.style.height = h + "px";
   applyZoom();
+}
+function setFace(el, t) {               // only touches the DOM when the face changed (shuffle)
+  if (el.dataset.face === String(t.face)) return;
+  el.dataset.face = t.face;
+  const c = covers[t.face];
+  el.title = coverTitle(c);
+  el.replaceChildren(coverHealth.failed.has(c.id) ? fallbackFace(c) : coverImg(c));
+}
+function coverImg(c) {
+  const img = document.createElement("img");
+  img.alt = coverTitle(c);
+  img.onload = () => coverLoaded(c.id);
+  img.onerror = () => { coverFailed(c.id); img.replaceWith(fallbackFace(c)); };
+  img.src = coverUrl(c.id);
+  return img;
+}
+function render() {
+  if (tileElsFor !== tiles) buildBoard();
+  const alive = aliveSet();
+  for (const t of tiles) {
+    const el = tileEls[t.id];
+    setFace(el, t);
+    el.hidden = !t.alive;
+    if (!t.alive) continue;
+    const covered = t.above.some(i => alive.has(i));
+    el.className = "tile " + (covered ? "blocked covered" : freeWith(t, alive) ? "free" : "blocked sided");
+  }
   renderTray();
   $("tilesLeft").textContent = `${alive.size} tiles`;
   $("btnUndo").disabled = !history.length;

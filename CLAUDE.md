@@ -222,7 +222,10 @@ players' browsers; they are unused.)
 4. Dealing retries up to 400 times; a pathological layout could stall a slow phone briefly.
 5. Catalog titles that don't match MusicBrainz spelling are dropped at precompute time (listed
    by the tool) — fix or remove them.
-6. `render()` rebuilds every tile element on each move; fine at ≤144 tiles.
+6. Tile elements are built once per deal (`buildBoard()`) and only have their classes and
+   `hidden` state updated on each move, so covers are never re-requested mid-game. Each cover
+   URL goes through two uncacheable redirects, so anything that recreates `<img>` elements
+   mid-game would make the board visibly reload on a cold cache or in Safari.
 7. Real-device testing: e2e tests emulate phones in Chromium only; check Safari/iOS audio and
    touch drag on real hardware.
 

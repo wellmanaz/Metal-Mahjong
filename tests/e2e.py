@@ -24,7 +24,7 @@ for line in src.split("`")[1].strip().split("\n"):
     f = line.split("|")
     CATALOG[(f[2], f[3])] = f[0]
 
-calls = {"mb": 0, "gc": 0}
+calls = {"mb": 0, "gc": 0, "cover": 0}
 def mock_mb(route):
     calls["mb"] += 1
     q = urllib.parse.parse_qs(urllib.parse.urlparse(route.request.url).query)["query"][0]
@@ -58,7 +58,7 @@ def context(browser, viewport, mobile=False, covers_ok=True):
     ctx = browser.new_context(viewport=viewport, is_mobile=mobile, has_touch=mobile)
     ctx.route("https://musicbrainz.org/**", mock_mb)
     if covers_ok:
-        ctx.route("https://coverartarchive.org/**", lambda r: r.fulfill(status=200, content_type="image/png", body=PNG))
+        ctx.route("https://coverartarchive.org/**", lambda r: (calls.__setitem__("cover", calls["cover"] + 1), r.fulfill(status=200, content_type="image/png", body=PNG)))
     else:
         ctx.route("https://coverartarchive.org/**", lambda r: r.fulfill(status=503, body=""))
     ctx.route("https://fonts.googleapis.com/**", lambda r: r.fulfill(status=200, content_type="text/css", body=""))
@@ -111,6 +111,13 @@ def main():
         page.select_option("#genreSel", "thrash"); page.select_option("#decadeSel", "1980")
         page.select_option("#diffSel", ".9"); page.uncheck("#sideBlock")
         check("changing settings does not redeal", page.evaluate("tiles.map(t => t.face).join()") == before)
+        page.wait_for_timeout(500); covers_before = calls["cover"]
+        kept = page.evaluate("""() => { const img = document.querySelector('.tile:not([hidden]) img'); const n = document.querySelectorAll('.tile').length;
+              clickTile(bestMove()); return img.isConnected && document.querySelectorAll('.tile').length === n; }""")
+        page.wait_for_timeout(500)
+        check("a move keeps the tile elements and refetches no covers", kept and calls["cover"] == covers_before, f"{calls['cover'] - covers_before} cover requests")
+        undo_ok = page.evaluate("() => { undo(); return document.querySelectorAll('.tile:not([hidden])').length === tiles.length; }")
+        check("undo shows the tile again", undo_ok)
         check("side-blocking rule unchanged until Start", page.evaluate("SIDE_BLOCKING") is True)
         check("Start button shows pending state", "pending" in page.get_attribute("#btnStart", "class"))
         page.click("#btnStart")
