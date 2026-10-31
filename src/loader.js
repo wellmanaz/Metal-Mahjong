@@ -9,6 +9,18 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const norm = s => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const esc = s => s.replace(/[\\"]/g, m => "\\" + m);
 
+/* ---------- Error reporting (GoatCounter custom events, at most 5 per visit) ---------- */
+const reportedErrors = new Set();
+function reportError(msg) {
+  const gc = window.goatcounter;
+  msg = String(msg).slice(0, 120);
+  if (!gc || !gc.count || reportedErrors.size >= 5 || reportedErrors.has(msg)) return;
+  reportedErrors.add(msg);
+  try { gc.count({ path: "error/" + msg, title: "JS error", event: true }); } catch (e) { /* never break the game over reporting */ }
+}
+window.addEventListener("error", e => reportError((e.message || "error") + " @" + (e.lineno || 0)));
+window.addEventListener("unhandledrejection", e => reportError("unhandled: " + (e.reason && e.reason.message || e.reason)));
+
 let lastMbCall = 0;
 async function mbFetch(query, limit = 100) {
   const wait = 1100 - (Date.now() - lastMbCall);       // MusicBrainz: max 1 req/sec

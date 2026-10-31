@@ -17,8 +17,12 @@ Jason Wellman.
 Handoff steps completed 2026-09-16: precompute run (980/980 rows matched, 1 without cover art:
 Haken — Affinity), `index.html` rebuilt, `tests/layouts.test.mjs` and `tests/e2e.py` all passing.
 
+Analytics added 2026-10-31 (GoatCounter, see §7). The GoatCounter site `metalmahjong` must exist
+for hits to be recorded; if that code was taken at sign-up, change the two URLs in `src/head.html`
+and the dashboard link in §7.
+
 Still to do after each deploy: verify the live site loads a board with no requests to
-`musicbrainz.org` (DevTools → Network).
+`musicbrainz.org` (DevTools → Network), and that the GoatCounter dashboard shows the visit.
 
 ## 1. Quick start
 
@@ -182,6 +186,7 @@ Dødheimsgard — A Umbra Omega, Nightwish — Human. :II: Nature. The search ca
 | iTunes Search API | Fallback previews | Roughly 20 requests/minute per IP. |
 | Spotify | Links + optional playlist embed only | **Do not integrate the Web API / SDK.** Spotify's developer policy forbids using Spotify content in games or quizzes, and dev-mode apps are limited to allow-listed Premium users. A full-length Spotify player was built and deliberately removed. |
 | Google Fonts | Metal Mania + Barlow Condensed | Fallback stacks defined. |
+| GoatCounter | Visit counts + JS error events | Free for personal non-commercial sites; no cookies, no personal data, so no consent banner. Site code `metalmahjong` (tag in `src/head.html`); dashboard at https://metalmahjong.goatcounter.com. `count.js` skips localhost, so dev runs are not counted. |
 
 **Monetization:** decided against for now. Ads/affiliate would conflict with the Deezer terms and
 the unlicensed cover art. Any commercial direction requires original or licensed art and music
@@ -208,8 +213,9 @@ players' browsers; they are unused.)
 
 ## 10. Known limitations / next steps
 
-1. **No analytics or error reporting.** Suggested: GoatCounter or Plausible (privacy-friendly),
-   plus a `window.onerror` hook that reports to it.
+1. **Analytics are page views only.** GoatCounter counts visits and receives uncaught JS errors as
+   events (`reportError` in `src/loader.js`, path `error/<message> @<line>`, max 5 per visit,
+   line numbers refer to `index.html`). No game-level events (boards started, wins) are tracked.
 2. **Deezer JSONP dependency** (see §7) — have a proxy plan ready.
 3. **Cover Art Archive outage** degrades to text tiles; there is no mirror by design (re-hosting
    covers worsens the copyright position).

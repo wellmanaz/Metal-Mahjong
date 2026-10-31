@@ -7,6 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Metal+Mania&family=Barlow+Condensed:wght@400;600&display=swap" rel="stylesheet">
+<!-- Anonymous visit counts (no cookies, no personal data). Dashboard: https://metalmahjong.goatcounter.com -->
+<script data-goatcounter="https://metalmahjong.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
 <style>
 :root {
   --iron: #25282c; --iron-deep: #17191c;
@@ -383,7 +385,7 @@ body.wide .credit { grid-column: 2; grid-row: 2; text-align: center; padding: 4p
   </div>
 </div>
 <div id="boardWrap"><div id="sizer"><div id="board"></div></div></div>
-<div class="credit">Turtle, Spider and Explosion layouts from <a href="https://github.com/KDE/kmahjongg">KMahjongg</a> (GPL-2.0-or-later). Covers from the Cover Art Archive via MusicBrainz.</div>
+<div class="credit">Turtle, Spider and Explosion layouts from <a href="https://github.com/KDE/kmahjongg">KMahjongg</a> (GPL-2.0-or-later). Covers from the Cover Art Archive via MusicBrainz. Anonymous visit counts via <a href="https://www.goatcounter.com/">GoatCounter</a> (no cookies).</div>
 <dialog id="importDlg">
   <form method="dialog">
     <h2>Import a KMahjongg layout</h2>
@@ -418,6 +420,18 @@ const status = msg => { $("status").textContent = msg; };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const norm = s => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const esc = s => s.replace(/[\\"]/g, m => "\\" + m);
+
+/* ---------- Error reporting (GoatCounter custom events, at most 5 per visit) ---------- */
+const reportedErrors = new Set();
+function reportError(msg) {
+  const gc = window.goatcounter;
+  msg = String(msg).slice(0, 120);
+  if (!gc || !gc.count || reportedErrors.size >= 5 || reportedErrors.has(msg)) return;
+  reportedErrors.add(msg);
+  try { gc.count({ path: "error/" + msg, title: "JS error", event: true }); } catch (e) { /* never break the game over reporting */ }
+}
+window.addEventListener("error", e => reportError((e.message || "error") + " @" + (e.lineno || 0)));
+window.addEventListener("unhandledrejection", e => reportError("unhandled: " + (e.reason && e.reason.message || e.reason)));
 
 let lastMbCall = 0;
 async function mbFetch(query, limit = 100) {

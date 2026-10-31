@@ -24,7 +24,7 @@ for line in src.split("`")[1].strip().split("\n"):
     f = line.split("|")
     CATALOG[(f[2], f[3])] = f[0]
 
-calls = {"mb": 0}
+calls = {"mb": 0, "gc": 0}
 def mock_mb(route):
     calls["mb"] += 1
     q = urllib.parse.parse_qs(urllib.parse.urlparse(route.request.url).query)["query"][0]
@@ -48,6 +48,12 @@ def mock_deezer(route):
                           "artist": {"name": artist}, "album": {"title": album}} for i in range(3)]}
     route.fulfill(status=200, content_type="application/javascript", body=f"{q['callback'][0]}({json.dumps(body)})")
 
+# Stand-in for GoatCounter's count.js: records every hit/event so tests can assert on them.
+def mock_goatcounter(route):
+    calls["gc"] += 1
+    route.fulfill(status=200, content_type="application/javascript",
+                  body="window.gcEvents = []; window.goatcounter = { count: v => window.gcEvents.push(v) };")
+
 def context(browser, viewport, mobile=False, covers_ok=True):
     ctx = browser.new_context(viewport=viewport, is_mobile=mobile, has_touch=mobile)
     ctx.route("https://musicbrainz.org/**", mock_mb)
@@ -60,6 +66,8 @@ def context(browser, viewport, mobile=False, covers_ok=True):
     ctx.route("https://itunes.apple.com/**", lambda r: r.fulfill(status=200, content_type="application/json",
               headers={"Access-Control-Allow-Origin": "*"}, body=json.dumps({"results": []})))
     ctx.route("https://cdnt-preview.dzcdn.net/**", lambda r: r.fulfill(status=200, content_type="audio/wav", body=WAV))
+    ctx.route("https://gc.zgo.at/**", mock_goatcounter)
+    ctx.route("https://*.goatcounter.com/**", lambda r: r.abort())
     return ctx
 
 failures = 0
@@ -93,6 +101,12 @@ def main():
         page, errors = open_game(ctx)
         check("desktop uses the wide three-column layout", page.evaluate("document.body.classList.contains('wide')"))
         check("no MusicBrainz requests on startup", calls["mb"] == 0, f"{calls['mb']} requests")
+        check("GoatCounter tag loads", calls["gc"] >= 1 and page.evaluate("!!document.querySelector('script[data-goatcounter]')"))
+        page.evaluate("() => { setTimeout(() => { throw new Error('e2e probe'); }, 0); }"); page.wait_for_timeout(200)
+        page.evaluate("() => { setTimeout(() => { throw new Error('e2e probe'); }, 0); }"); page.wait_for_timeout(200)
+        ev = page.evaluate("window.gcEvents.filter(e => e.path.startsWith('error/'))")
+        check("JS errors reported once as GoatCounter events", len(ev) == 1 and "e2e probe" in ev[0]["path"], json.dumps(ev))
+        errors.clear()
         before = page.evaluate("tiles.map(t => t.face).join()")
         page.select_option("#genreSel", "thrash"); page.select_option("#decadeSel", "1980")
         page.select_option("#diffSel", ".9"); page.uncheck("#sideBlock")
