@@ -57,7 +57,15 @@ def mock_goatcounter(route):
 def context(browser, viewport, mobile=False, covers_ok=True):
     ctx = browser.new_context(viewport=viewport, is_mobile=mobile, has_touch=mobile)
     ctx.route("https://musicbrainz.org/**", mock_mb)
-    if covers_ok:
+    if covers_ok == "flaky":
+        # every cover fails on its first request and succeeds on the retry
+        seen = set()
+        def flaky(r):
+            u = r.request.url.split("?")[0]
+            if u in seen: r.fulfill(status=200, content_type="image/png", body=PNG)
+            else: seen.add(u); r.fulfill(status=500, body="")
+        ctx.route("https://coverartarchive.org/**", flaky)
+    elif covers_ok:
         ctx.route("https://coverartarchive.org/**", lambda r: (calls.__setitem__("cover", calls["cover"] + 1), r.fulfill(status=200, content_type="image/png", body=PNG)))
     else:
         ctx.route("https://coverartarchive.org/**", lambda r: r.fulfill(status=503, body=""))
@@ -171,9 +179,23 @@ def main():
         page, errors = open_game(ctx)
         page.wait_for_timeout(1500)
         fb = page.evaluate("document.querySelectorAll('.tile .fallback').length")
-        check("tiles show text when covers fail", fb > 0, f"{fb} fallback tiles")
+        check("a failed cover is not written off before retrying", fb == 0, f"{fb} fallback tiles after 1.5s")
+        page.wait_for_timeout(10500)             # two retries at 2.5s and 7s, then text
+        fb = page.evaluate("document.querySelectorAll('.tile .fallback').length")
+        check("tiles show text when covers keep failing", fb > 0, f"{fb} fallback tiles")
         check("outage warning shown", "Cover Art Archive" in page.inner_text("#status"))
         check("no page errors (outage)", not errors, "; ".join(errors))
+        ctx.close()
+
+        # 4. Flaky archive: every cover 500s once, then loads. No tile should end up as text.
+        ctx = context(browser, {"width": 1400, "height": 850}, covers_ok="flaky")
+        page, errors = open_game(ctx)
+        page.wait_for_timeout(4500)
+        r = page.evaluate("""() => ({ fallback: document.querySelectorAll('.tile .fallback').length,
+              loaded: [...document.querySelectorAll('.tile img')].filter(i => i.complete && i.naturalWidth > 0).length,
+              imgs: document.querySelectorAll('.tile img').length, failed: coverHealth.failed.size })""")
+        check("covers that fail once load on retry", r["fallback"] == 0 and r["loaded"] == r["imgs"] and r["failed"] == 0, json.dumps(r))
+        check("no page errors (flaky)", not errors, "; ".join(errors))
         ctx.close()
 
         browser.close()

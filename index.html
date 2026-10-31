@@ -2282,13 +2282,26 @@ function setFace(el, t) {               // only touches the DOM when the face ch
   el.dataset.face = t.face;
   const c = covers[t.face];
   el.title = coverTitle(c);
-  el.replaceChildren(coverHealth.failed.has(c.id) ? fallbackFace(c) : coverImg(c));
+  el.replaceChildren(coverImg(c));            // always try again on a new deal; failures were likely transient
 }
+/* archive.org's storage nodes return sporadic 500s under load (measured ~1 in 7 on a bad day,
+   nearly all fine on a retry), so a cover gets three tries before the tile falls back to text.
+   The query string only busts the browser's memory of the failed load; the archive ignores it. */
+const COVER_RETRY_MS = [2500, 7000];
 function coverImg(c) {
   const img = document.createElement("img");
   img.alt = coverTitle(c);
+  let tries = 0;
   img.onload = () => coverLoaded(c.id);
-  img.onerror = () => { coverFailed(c.id); img.replaceWith(fallbackFace(c)); };
+  img.onerror = () => {
+    if (tries < COVER_RETRY_MS.length) {
+      const delay = COVER_RETRY_MS[tries++];
+      setTimeout(() => { if (img.isConnected) img.src = coverUrl(c.id) + "?r=" + tries; }, delay);
+      return;
+    }
+    coverFailed(c.id);
+    img.replaceWith(fallbackFace(c));
+  };
   img.src = coverUrl(c.id);
   return img;
 }
@@ -2319,7 +2332,7 @@ function fallbackFace(c) {
   f.append(a, t);
   return f;
 }
-function coverLoaded(id) { coverHealth.ok.add(id); }
+function coverLoaded(id) { coverHealth.ok.add(id); coverHealth.failed.delete(id); }
 function coverFailed(id) {
   coverHealth.failed.add(id);
   const f = coverHealth.failed.size, o = coverHealth.ok.size;
@@ -2339,10 +2352,8 @@ function renderTray() {
     const id = tray[i];
     if (id !== undefined) {
       const c = covers[tiles[id].face];
-      const img = document.createElement("img");
-      img.alt = coverTitle(c); img.title = coverTitle(c);
       if (coverHealth.failed.has(c.id)) slot.appendChild(fallbackFace(c));
-      else { img.onerror = () => img.replaceWith(fallbackFace(c)); img.src = coverUrl(c.id); slot.appendChild(img); }
+      else { const img = coverImg(c); img.title = img.alt; slot.appendChild(img); }
     }
     el.appendChild(slot);
   }

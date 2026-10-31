@@ -127,7 +127,9 @@ persist in localStorage (`metal-mahjong-settings`).
 - If the pool is smaller than the board needs, albums repeat (status line says so). There is no
   longer any runtime MusicBrainz tag search — it was removed for scale (see §7).
 - Covers: `https://coverartarchive.org/release-group/<mbid>/front-250` (hotlinked, never
-  re-hosted). If an image fails, the tile shows artist/title text (`fallbackFace`); if most fail,
+  re-hosted). An image gets three tries (`coverImg`, retries after 2.5 s and 7 s with a `?r=n` cache-buster the
+  archive ignores) because archive.org's storage nodes throw sporadic 500s under load; only then
+  does the tile show artist/title text (`fallbackFace`), and a new deal tries again. If most fail,
   the status line reports a Cover Art Archive outage. **Reload covers** re-checks covers this
   browser had marked missing.
 - Browser cache: `metal-mahjong-albums-v4` (precomputed data always wins, except covers this
